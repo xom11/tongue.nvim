@@ -47,7 +47,11 @@ local notify = true
 -- plugin silently forgets your Vietnamese the first time you leave Insert mode
 -- quickly.
 
+-- epoch   : bumped on every crossing of the typing boundary; a reading taken
+--           under an older epoch describes a mode we have already left
+-- recheck  : a boundary was crossed while a command was in flight
 local last_layout, inserting, busy, observe, applied
+local epoch, recheck = 0, false
 local augroup = nil
 
 local warned = {}
@@ -85,24 +89,70 @@ end
 
 -- ── reading the machine ─────────────────────────────────────────────────────
 
---- Run argv, hand the result to `cb` on the main loop.
+local SPAWN_FAILED = -1
+
+local function why(code)
+	if code == 124 then
+		return "timed out"
+	elseif code == SPAWN_FAILED then
+		return "could not be started"
+	end
+	return "exited " .. code
+end
+
+--- Run argv, hand the result to `cb` on the main loop. Exactly once.
 ---
---- `timeout` is not optional insurance: without it a backend that hangs leaves
---- `busy` true forever and the plugin dies silently mid-session, which is the
---- exact failure mode it is supposed to prevent.
+--- `vim.system` fails in two ways that a plain callback never sees, and either
+--- one leaves `busy` latched for the rest of the session -- the plugin dead,
+--- silently, which is precisely the failure it exists to prevent:
+---
+---   * A failed spawn (ENOENT on a typo'd command, EACCES on a non-executable)
+---     is raised with `error()` on THIS stack, not delivered to the callback.
+---     Uncaught, it escapes through the ModeChanged autocmd with `busy` already
+---     true. Hence `pcall`.
+---
+---   * `timeout` kills the direct child, but the callback only runs once the
+---     stdout pipe closes. A backend that forks -- every shell wrapper does --
+---     leaves a grandchild holding that pipe, so the callback arrives at the
+---     grandchild's pace instead. Measured: a wrapper forking `sleep 5` with
+---     timeout=200 called back after 5016 ms; the same script with `exec sleep 5`
+---     after 202 ms. The timer below is the real deadline. `timeout` stays
+---     because for a well-behaved backend it is what actually kills the process.
 local function run(argv, cb)
-	vim.system(argv, { text = true, timeout = timeout_ms }, function(out)
+	local done = false
+	local timer = assert(uv.new_timer())
+
+	local function settle(out)
+		-- Not defensive padding: an orphaned grandchild does eventually exit and
+		-- fire the real callback, which would deliver `cb` a second time for one
+		-- command.
+		if done then
+			return
+		end
+		done = true
+		timer:stop()
+		if not timer:is_closing() then
+			timer:close()
+		end
 		vim.schedule(function()
 			cb(out)
 		end)
+	end
+
+	timer:start(timeout_ms, 0, function()
+		settle({ code = 124, signal = 15, stdout = "", stderr = "" })
 	end)
+
+	local ok, err = pcall(vim.system, argv, { text = true, timeout = timeout_ms }, settle)
+	if not ok then
+		settle({ code = SPAWN_FAILED, signal = 0, stdout = "", stderr = tostring(err) })
+	end
 end
 
 local function get_async(cb)
 	run(cfg.get, function(out)
 		if out.code ~= 0 then
-			local what = out.code == 124 and "timed out" or ("exited " .. out.code)
-			warn("get-failed", ("`%s` %s%s"):format(table.concat(cfg.get, " "), what, tail(out.stderr)))
+			warn("get-failed", ("`%s` %s%s"):format(table.concat(cfg.get, " "), why(out.code), tail(out.stderr)))
 			return cb(nil)
 		end
 		local token, err = require("tongue.backend").sanitize(cfg, out.stdout)
@@ -120,8 +170,7 @@ local function set_async(token, cb)
 	local argv = vim.list_extend(vim.deepcopy(cfg.set), { token })
 	run(argv, function(out)
 		if out.code ~= 0 then
-			local what = out.code == 124 and "timed out" or ("exited " .. out.code)
-			warn("set-failed", ("`%s` %s%s"):format(table.concat(argv, " "), what, tail(out.stderr)))
+			warn("set-failed", ("`%s` %s%s"):format(table.concat(argv, " "), why(out.code), tail(out.stderr)))
 		end
 		cb(out.code)
 	end)
@@ -146,8 +195,10 @@ finish = function(applied_for)
 	busy = false
 	-- Re-derive. If the intent moved while we were working, go again; if it did
 	-- not, stop -- including when the command failed, so a broken backend cannot
-	-- spin.
-	if want() ~= applied_for then
+	-- spin. `recheck` covers the case where the intent ended up back where it
+	-- started but a boundary was crossed in between, so the reading we acted on
+	-- described a mode we had already left.
+	if recheck or want() ~= applied_for then
 		cycle()
 	end
 end
@@ -157,13 +208,27 @@ cycle = function()
 		return
 	end
 	busy = true
+	recheck = false
+	local my = epoch
 
 	get_async(function(current)
-		if observe then
+		-- A reading is only evidence about the mode that was current when it was
+		-- taken. A real backend answers from the OS the instant it starts, so a
+		-- 50 ms read that spans a mode change describes the mode we have left.
+		if epoch ~= my then
+			-- Do not act on it, and above all do not force English yet: that
+			-- would overwrite the very state `observe` is still waiting to read.
+			-- One more lap costs a read; getting this wrong costs the layout.
+			recheck = true
+			return finish(want())
+		end
+
+		if observe and current ~= nil then
+			-- Cleared only on a reading we can trust. A failed read is not
+			-- evidence -- burning the flag on it means the layout is never
+			-- learned at all.
 			observe = false
-			if current == nil then
-				-- A failed read is not evidence. Keep what we had.
-			elseif current ~= cfg.english then
+			if current ~= cfg.english then
 				-- Unambiguous: we never set anything but English on the way out,
 				-- so a non-English reading is the user's own doing.
 				last_layout = current
@@ -213,9 +278,18 @@ local function on_mode(old_mode, new_mode)
 		return -- sub-mode churn; nothing crossed the boundary
 	end
 	inserting = now
-	-- Only take a reading when we are idle. Mid-cycle, the machine may be showing
-	-- our own in-flight change rather than the user's.
-	if not now and not busy then
+	-- Every crossing invalidates any reading already in flight: it was taken
+	-- before this boundary, so it describes a mode we have already left.
+	epoch = epoch + 1
+	if busy then
+		recheck = true
+	end
+	if not now then
+		-- Always ask to observe on the way out. Whether a given reading is
+		-- trustworthy enough to observe *with* is decided in `cycle`, by epoch --
+		-- dropping the request here instead (the obvious guard, `and not busy`)
+		-- silently forgets a switch you made mid-Insert whenever you leave
+		-- quickly, which is the thing this plugin promises to remember.
 		observe = true
 	end
 	cycle()
@@ -251,6 +325,12 @@ local function attach()
 		callback = function()
 			if not typing(vim.fn.mode(1)) then
 				inserting = false
+				-- Something outside Neovim may have moved the input method, so a
+				-- reading already in flight cannot be trusted here either.
+				epoch = epoch + 1
+				if busy then
+					recheck = true
+				end
 				cycle()
 			end
 		end,
@@ -300,6 +380,8 @@ function M.setup(opts)
 	inserting = false
 	busy = false
 	applied = nil
+	epoch = 0
+	recheck = false
 
 	attach()
 

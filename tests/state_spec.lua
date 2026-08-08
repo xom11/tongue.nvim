@@ -155,10 +155,92 @@ return function(t)
 		t.eq(st().busy, false, "and it must not be left mid-cycle")
 	end)
 
-	t.test("a hanging backend times out instead of wedging", function()
-		h.arm({ machine = "en", delay = 900, timeout = 150 })
-		h.settle(6000)
-		t.eq(st().busy, false, "a hung command must release the single-flight latch")
+	t.test("a hanging backend releases the latch AT the timeout", function()
+		-- The old version of this test used delay=900 against a 6000 ms settle
+		-- budget, so it passed because the command finished on its own -- deleting
+		-- `timeout` from vim.system entirely still left the suite 30/30 green.
+		--
+		-- The real hard case: `fake-im` forks `sleep`, and that grandchild inherits
+		-- the stdout pipe. `vim.system` SIGTERMs the shell at `timeout` but still
+		-- waits for EOF, so its callback arrives at the *delay*, not the timeout.
+		-- Measured before the fix: delay=5000 / timeout=150 released at 10175 ms.
+		-- The uv timer in `run()` is what makes the timeout a real deadline.
+		h.arm({ machine = "en", delay = 5000, timeout = 150 })
+		local uv = vim.uv or vim.loop
+		vim.wait(3000, function()
+			return st().busy
+		end, 2)
+		local t0 = uv.hrtime()
+		t.ok(h.settle(2500), "a hung command must release the single-flight latch")
+		t.eq(st().busy, false)
+		t.ok((uv.hrtime() - t0) / 1e6 < 1500, "must release at the timeout, not when the child finally exits")
+	end)
+
+	t.test("a reading older than a mode change is not acted on", function()
+		-- The stale-read bug, and the one the fixture could not previously reveal.
+		-- Real CLIs answer from the OS the instant they start; a 60 ms read that
+		-- spans `i` -> hotkey -> Esc therefore reports the layout from BEFORE the
+		-- user's switch. Acting on it ends in Normal mode with the IME still on,
+		-- and zero `set` commands issued.
+		h.arm({ machine = "en", delay = 60 })
+		h.settle()
+		h.enter() -- read starts now, snapshotting "en"
+		h.set_machine("vi") -- user's global hotkey, inside the read window
+		h.leave() -- and straight back out
+		h.settle()
+		t.eq(h.machine(), "en", "must not be left in Normal mode with the IME on")
+		t.eq(st().last_layout, "vi", "and the switch made mid-Insert must be remembered")
+	end)
+
+	t.test("a switch made mid-Insert survives a fast exit", function()
+		-- Same shape, slower hand: the observation must not simply be dropped
+		-- because a command happened to be in flight when Insert was left.
+		h.arm({ machine = "en", delay = 60 })
+		h.settle()
+		h.enter()
+		h.settle()
+		h.set_machine("zh")
+		h.enter() -- churn to get a command in flight
+		h.leave()
+		h.settle()
+		t.eq(st().last_layout, "zh", "the manual switch must not be forgotten")
+	end)
+
+	t.test("a failed read does not burn the pending observation", function()
+		h.arm({ machine = "en" })
+		h.settle()
+		h.enter()
+		h.settle()
+		h.set_machine("vi")
+		vim.env.FAKE_IM_FAIL = "1"
+		h.leave()
+		h.settle()
+		vim.env.FAKE_IM_FAIL = nil
+		-- The read failed, so nothing could be learned -- but the request to learn
+		-- must survive rather than being consumed by the failure.
+		h.enter()
+		h.leave()
+		h.settle()
+		t.eq(st().last_layout, "vi", "the layout must still get learned once reads work again")
+	end)
+
+	t.test("a backend that cannot be started does not wedge the plugin", function()
+		-- vim.system raises ENOENT on THIS stack rather than calling back, so an
+		-- unguarded spawn escapes through the autocmd with `busy` already true --
+		-- plugin dead for the rest of the session, silently.
+		require("tongue").setup({
+			backend = { english = "en", get = { "tongue-nvim-no-such-binary" }, set = { "tongue-nvim-no-such-binary" } },
+			notify = false,
+		})
+		h.settle(2000)
+		t.eq(st().enabled, true, "an explicit backend is still configured")
+		t.eq(st().busy, false, "a failed spawn must release the latch")
+		for _ = 1, 3 do
+			h.enter()
+			h.leave()
+		end
+		h.settle(2000)
+		t.eq(st().busy, false, "and must keep releasing it")
 	end)
 
 	t.test("an unreadable backend never restores blind", function()

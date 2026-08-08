@@ -10,15 +10,30 @@
 # khong chi trang thai cuoi. "Dung trang thai cuoi" khong du -- phan de vo nhat
 # cua plugin nay la thu tu va so luong lenh phat ra, khong phai ket qua.
 #
+# HAI DIEU DUOI DAY LA CO Y, va bo di la mat kha nang phat hien loi:
+#
+# 1. Duong `get` CHUP state NGAY roi moi ngu, roi in ban chup -- dung thu tu
+#    moi CLI that lam (hoi he dieu hanh luc khoi dong, tra loi khi xong). Ban
+#    dau fixture nay ngu TRUOC khi doc, nghia la so doc luon tuoi, va nhu the
+#    no VE MAT CAU TRUC khong the lo ra loi doc-cu -- loi nang nhat tung tim
+#    thay o plugin nay. Mot fixture de hon backend that thi test bang khong.
+#
+# 2. `sleep` la mot tien trinh RIENG (fork), khong `exec`. Do la truong hop kho
+#    that: `vim.system{timeout=}` giet tien trinh con truc tiep nhung callback
+#    chi chay khi ong stdout dong, ma chau ke thua cai ong do. Do duoc: wrapper
+#    fork `sleep 5` voi timeout=200 goi callback sau 5016 ms; cung script voi
+#    `exec sleep 5` thi 202 ms. Doi sang `exec` o day la vo hieu hoa test bao ve
+#    bo dem thoi gian trong run().
+#
 # Bien moi truong:
 #   FAKE_IM_STATE     file giu token hien tai            (bat buoc)
 #   FAKE_IM_LOG       file nhat ky lenh                  (tuy chon)
 #   FAKE_IM_DELAY_MS  do tre gia, ap cho CA get lan set  (tuy chon, mac dinh 0)
 #   FAKE_IM_FAIL      khac rong -> thoat 1 va khong lam gi
 #
-# Do tre la thu bat buoc phai gia lap duoc: `tongue` that mat ~53ms, va toan bo
-# may trang thai cua plugin ton tai chi vi do tre do. Test khong dieu khien duoc
-# do tre thi khong test duoc phan dang test.
+# Do tre la thu bat buoc phai gia lap duoc: `tongue` that mat ~40-50 ms, va toan
+# bo may trang thai cua plugin ton tai chi vi do tre do. Test khong dieu khien
+# duoc do tre thi khong test duoc phan dang test.
 
 set -u
 
@@ -39,17 +54,23 @@ if [ "${FAKE_IM_FAIL:-}" != "" ]; then
 	exit 1
 fi
 
-# `sleep` phan so: BSD (macOS) va GNU (Linux) deu nhan, du cho POSIX khong bat buoc.
-if [ "$delay_ms" -gt 0 ] 2>/dev/null; then
-	sleep "$(awk -v ms="$delay_ms" 'BEGIN { printf "%.3f", ms / 1000 }')"
-fi
+nap() {
+	# `sleep` phan so: BSD (macOS) va GNU (Linux) deu nhan, du POSIX khong bat buoc.
+	if [ "$delay_ms" -gt 0 ] 2>/dev/null; then
+		sleep "$(awk -v ms="$delay_ms" 'BEGIN { printf "%.3f", ms / 1000 }')"
+	fi
+}
 
 if [ "$#" -eq 0 ]; then
+	# Chup TRUOC khi ngu -- xem ghi chu (1) dau file.
 	if [ -r "$state" ]; then
-		cat "$state"
+		snap="$(cat "$state")"
 	else
-		echo ""
+		snap=""
 	fi
+	nap
+	printf '%s\n' "$snap"
 else
+	nap
 	printf '%s' "$1" >"$state"
 fi

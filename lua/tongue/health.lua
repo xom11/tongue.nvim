@@ -65,9 +65,13 @@ function H.check()
 	end
 
 	if out.code ~= 0 then
+		-- `gsub` returns TWO values, so writing it inline in a table constructor
+		-- builds `{ "boom", 1 }` -- and vim.health rejects the number, throwing
+		-- out of the very check that exists to diagnose this case.
+		local errtail = (out.stderr or ""):gsub("%s+$", "")
 		health.error(
 			("`%s` exited %d"):format(table.concat(cfg.get, " "), out.code),
-			{ (out.stderr or ""):gsub("%s+$", "") }
+			errtail ~= "" and { errtail } or nil
 		)
 		return
 	end
@@ -84,6 +88,14 @@ function H.check()
 	local token = raw:gsub("^%s+", "")
 	if token == "" then
 		health.error(("`%s` printed nothing"):format(exe))
+	elseif cfg.unknown and token == cfg.unknown then
+		-- Must come before the checks below: `unknown` is a legitimate answer
+		-- that `sanitize` maps to English, and it is deliberately NOT listed in
+		-- `tokens`. Reporting it as an error accuses the user of installing the
+		-- wrong binary while the plugin is working perfectly.
+		health.info(
+			("reads back %q -- the backend does not recognise the live state; treated as English"):format(token)
+		)
 	elseif token:find("%s") then
 		health.error(
 			("`%s` printed more than one token: %q"):format(exe, raw),
