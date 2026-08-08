@@ -184,7 +184,11 @@ return function(t)
 		-- and zero `set` commands issued.
 		h.arm({ machine = "en", delay = 60 })
 		h.settle()
-		h.enter() -- read starts now, snapshotting "en"
+		h.enter() -- read starts here
+		-- Wait for the child to actually reach its snapshot. Without this the
+		-- write below lands BEFORE the fork gets to read, the reading comes back
+		-- fresh, and the test proves nothing -- it passed with the fix removed.
+		vim.wait(25)
 		h.set_machine("vi") -- user's global hotkey, inside the read window
 		h.leave() -- and straight back out
 		h.settle()
@@ -218,8 +222,11 @@ return function(t)
 		vim.env.FAKE_IM_FAIL = nil
 		-- The read failed, so nothing could be learned -- but the request to learn
 		-- must survive rather than being consumed by the failure.
+		--
+		-- Only `enter` here, deliberately: another `leave` would set `observe`
+		-- afresh and hide a version that burns it, which is how this test first
+		-- passed against the very bug it is named for.
 		h.enter()
-		h.leave()
 		h.settle()
 		t.eq(st().last_layout, "vi", "the layout must still get learned once reads work again")
 	end)

@@ -11,9 +11,28 @@ local h = require("helpers")
 local function collect(fn)
 	local real = vim.health
 	local seen = {}
+	-- The stub must be as STRICT as the real vim.health, not merely as capable.
+	-- A permissive collector happily accepted `{ "boom", 1 }` -- the exact value
+	-- that makes the real one throw -- so this file passed against the bug it was
+	-- written to catch.
 	local function record(level)
 		return function(msg, advice)
-			seen[#seen + 1] = { level = level, msg = tostring(msg), advice = advice }
+			if type(msg) ~= "string" then
+				error(("vim.health.%s: expected string message, got %s"):format(level, type(msg)))
+			end
+			if advice ~= nil then
+				if type(advice) == "string" then
+					advice = { advice }
+				elseif type(advice) ~= "table" then
+					error(("vim.health.%s: advice must be a string or list, got %s"):format(level, type(advice)))
+				end
+				for i, line in ipairs(advice) do
+					if type(line) ~= "string" then
+						error(("vim.health.%s: advice[%d] must be a string, got %s"):format(level, i, type(line)))
+					end
+				end
+			end
+			seen[#seen + 1] = { level = level, msg = msg, advice = advice }
 		end
 	end
 	vim.health = {
