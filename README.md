@@ -167,8 +167,13 @@ Presets are available as `require("tongue.presets").tongue`, `.macism`,
   against ~40–50 ms for `tongue`, which also has an IME process to move.
   With `tongue` installed as well, `tongue` still wins — as intended.
 - **im-select.exe** — driven end to end on Windows 11 ARM64 with Neovim 0.12.4 as
-  a hand-written backend. Its *auto-detection* is new here and has not run on a
-  Windows machine.
+  a hand-written backend. Auto-detection now verified on that machine too: `uname`
+  reports `Windows_NT`, the chain resolves `im-select.exe`, and `english`,
+  `backend = "im-select.exe"` and a rejected malformed `english` all behave as
+  documented. The pure test specs — `mode`, `sanitize`, `backend`, 33 of them —
+  pass under Windows Neovim. The rest of the suite does not run there: `fake-im`
+  is a POSIX shell script, so every fixture-driven spec fails on `ENOENT`. That
+  is a limitation of the harness, not of the plugin.
 - **im-select** (macOS) — not run. Same shape as macism, and covered as a chain
   and as data, but the binary itself is untested here.
 
@@ -187,6 +192,14 @@ which.
 
 - Command-line mode counts as Normal. Right for `:`, arguably wrong for `/`, and
   the mode string cannot tell them apart.
+- **The SSH guard does not fire on Windows.** It keys off `$SSH_TTY`, and Windows
+  OpenSSH does not set it (measured on Windows 11 ARM64). So a Neovim run over
+  SSH into Windows *does* auto-detect `im-select.exe` — and `im-select.exe` needs
+  a foreground window, which an SSH session has none of, so it answers `0`. The
+  plugin has no allow-list for locale IDs (they are open-ended) and so accepts
+  `0` and remembers it as the layout to restore. Nothing is damaged and nothing
+  useful happens. Editing over SSH into Windows is the one case where this plugin
+  is better left out of your config.
 - Switching takes as long as your backend takes (~200 ms for `tongue`, because
   it starts and stops an IME process). There is a window after leaving Insert
   where the switch has not landed yet. Nothing in an editor plugin can close it.

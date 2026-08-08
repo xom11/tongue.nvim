@@ -152,7 +152,13 @@ macism          verified end to end on macOS 26.5.1, Neovim 0.12.4, macism
                 tongue is absent; outranked by tongue when both are present.
                 Reads cost ~22ms (tongue: ~40-50ms, it moves an IME too).
 im-select.exe   driven end to end on Windows 11 ARM64, Neovim 0.12.4, as a
-                hand-written backend. Its auto-detection has not run on Windows.
+                hand-written backend. Auto-detection verified there too: uname
+                says Windows_NT, the chain resolves im-select.exe, and `english`,
+                `backend = "im-select.exe"` and a rejected malformed `english`
+                all behave as documented. The pure specs (mode, sanitize,
+                backend -- 33 tests) pass under Windows Neovim; the rest of the
+                suite does not run there, because tests/fixtures/fake-im is a
+                POSIX shell script. That is the harness, not the plugin.
 im-select       not run. Same shape as macism; covered as a chain and as data.
 
 Every OS chain, Linux and Windows included, is exercised from a Mac:
@@ -179,6 +185,15 @@ an input source that was never what made you type Vietnamese.
 
 - Command-line mode counts as Normal. Correct for `:`, arguably wrong for `/`;
   the mode string cannot distinguish them.
+
+- The SSH guard does not fire on Windows. It keys off $SSH_TTY, and Windows
+  OpenSSH does not set it (measured on Windows 11 ARM64). So Neovim run over SSH
+  into Windows DOES auto-detect im-select.exe -- and im-select.exe needs a
+  foreground window, which an SSH session has none of, so it answers "0". Locale
+  IDs are open-ended, so there is no allow-list to reject that: the plugin
+  accepts "0" and remembers it as the layout to restore. Nothing is damaged and
+  nothing useful happens. Editing over SSH into Windows is the one case where
+  this plugin is better left out of the config.
 - A switch takes as long as the backend takes (~200ms for `tongue`, which
   starts and stops an IME process). The window after leaving Insert where the
   switch has not landed cannot be closed from inside an editor plugin.
