@@ -3,17 +3,25 @@ local typing = require("tongue.mode").typing
 return function(t)
 	-- The full table from `:help mode()`. Several of these cannot be reached
 	-- reliably from a headless test, which is exactly why the predicate is pure.
+	-- EVERY row, this time. The previous version said "the full table" and listed
+	-- 27 of the 37, quietly omitting the blockwise modes (which are a literal
+	-- CTRL-V / CTRL-S byte, not the letters), the Select-mode `v_CTRL-O` variants,
+	-- and the overstrike command-line modes 0.11 added. A predicate this small is
+	-- only worth having if the table it is checked against is the real one.
+	local CTRL_V, CTRL_S = "\22", "\19"
+
 	local TYPES = {
 		-- produce text
 		["i"] = true, -- Insert
-		["ic"] = true, -- Insert, completion menu
+		["ic"] = true, -- Insert mode completion
 		["ix"] = true, -- Insert, CTRL-X completion
 		["R"] = true, -- Replace
 		["Rc"] = true,
 		["Rx"] = true,
 		["Rv"] = true, -- virtual replace
 		["Rvc"] = true,
-		["t"] = true, -- terminal-insert
+		["Rvx"] = true,
+		["t"] = true, -- terminal-insert: keys go to the job
 		["niI"] = true, -- i_CTRL-O from Insert
 		["niR"] = true, -- i_CTRL-O from Replace
 		["niV"] = true, -- i_CTRL-O from virtual Replace
@@ -23,16 +31,26 @@ return function(t)
 		["no"] = false, -- operator-pending
 		["nov"] = false,
 		["noV"] = false,
+		["no" .. CTRL_V] = false,
 		["nt"] = false, -- terminal-NORMAL: starts with n, must not read as `t`
 		["ntT"] = false,
 		["v"] = false,
+		["vs"] = false, -- v_CTRL-O from Select
 		["V"] = false,
+		["Vs"] = false,
+		[CTRL_V] = false, -- Visual blockwise
+		[CTRL_V .. "s"] = false,
 		["s"] = false, -- Select: first printable key moves it to Insert anyway
 		["S"] = false,
+		[CTRL_S] = false, -- Select blockwise
 		["c"] = false, -- command-line
-		["cv"] = false,
+		["ce"] = false, -- Normal Ex mode, gQ
+		["cr"] = false, -- command-line overstrike, 0.11+
+		["cv"] = false, -- Vim Ex mode, Q
+		["cvr"] = false,
 		["r"] = false, -- hit-enter prompt
-		["rm"] = false,
+		["rm"] = false, -- the -- more -- prompt
+		["r?"] = false, -- a :confirm query
 		["!"] = false, -- :!sh
 	}
 

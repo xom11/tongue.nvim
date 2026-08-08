@@ -75,11 +75,16 @@ return function(t)
 	end)
 
 	t.test("the backend's `unknown` sentinel is not reported as a wrong binary", function()
-		-- `unknown` is a legitimate answer that sanitize maps to English, and it
-		-- is deliberately absent from `tokens`. Calling it an error accuses the
-		-- user of installing the wrong program while everything works.
-		h.arm({ machine = "unknown" })
+		-- `unknown` is a legitimate answer -- the backend saying it does not
+		-- recognise the live state. Calling it an error accuses the user of
+		-- installing the wrong program while everything works.
+		--
+		-- Set AFTER settling, like the declared-set case below: the plugin now
+		-- treats a shrug as "not English" and forces English, so arming with it
+		-- would leave health looking at `en`.
+		h.arm({ machine = "en" })
 		h.settle()
+		h.set_machine("unknown")
 		local ok, err, seen = check()
 		t.ok(ok, "must not throw: " .. tostring(err))
 		t.eq(find(seen, "error", "declared set"), nil, "must not be an error")
@@ -132,6 +137,24 @@ return function(t)
 		local ok, err, seen = check()
 		t.ok(ok, "must not throw: " .. tostring(err))
 		t.eq(find(seen, "warn", "lever"), nil, "no note, no warning")
+	end)
+
+	t.test("a config bug is an error, not the same `info` as an SSH session", function()
+		-- `resolve` computes the distinction and `setup` records it; it used to be
+		-- thrown away one line later. A user who typo'd their config and ran the
+		-- documented way to diagnose this plugin was told `inactive: ...` in the
+		-- same neutral style as "there is no IME tool here", long after the startup
+		-- error had scrolled off the screen.
+		local real = vim.notify
+		vim.notify = function() end
+		require("tongue").setup({ backend = "no-such-preset", notify = false })
+		vim.wait(100)
+		vim.notify = real
+
+		local ok, err, seen = check()
+		t.ok(ok, "must not throw: " .. tostring(err))
+		t.ok(find(seen, "error", "misconfigured") ~= nil, "a config bug must be an error: " .. vim.inspect(seen))
+		t.eq(find(seen, "info", "inactive"), nil, "and must not also be filed as benign")
 	end)
 
 	t.test("an inactive plugin is information, not an error", function()

@@ -23,16 +23,24 @@ local function probe(sysname, ...)
 	}
 end
 
---- Run `fn` with $SSH_TTY set, then put the environment back.
-local function under_ssh(fn)
-	local saved = vim.env.SSH_TTY
-	vim.env.SSH_TTY = "/dev/ttys000"
+--- Run `fn` with one of sshd's variables set, then put the environment back.
+---
+--- Parameterised over all three because which one survives to Neovim is not
+--- something the plugin gets to choose: tmux refreshes `SSH_CONNECTION` on
+--- attach and never touches `SSH_TTY`, so `ssh box` -> `tmux attach` -> `nvim`
+--- arrives with only the former set.
+---@param name string
+local function under_ssh(name, fn)
+	local saved = vim.env[name]
+	vim.env[name] = name == "SSH_TTY" and "/dev/ttys000" or "10.0.0.2 51000 10.0.0.1 22"
 	local ok, err = pcall(fn)
-	vim.env.SSH_TTY = saved
+	vim.env[name] = saved
 	if not ok then
 		error(err, 0)
 	end
 end
+
+local SSH_VARS = { "SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT" }
 
 return function(t)
 	-- ── the candidate chain ───────────────────────────────────────────────────
@@ -62,6 +70,32 @@ return function(t)
 		local b, why = backend.resolve({}, probe("Linux", "fcitx5-remote"))
 		t.eq(why, "fcitx5-remote")
 		t.eq(b.english, "keyboard-us")
+	end)
+
+	t.test("the Linux chain runs framework first, then layout, then WSL", function()
+		-- The order is the same promise the macOS chain makes: a machine that has
+		-- an input-method framework must keep choosing it. `xkb-switch` moves the
+		-- keyboard layout and cannot see fcitx or ibus at all, so preferring it
+		-- would be a silent downgrade of the guarantee this plugin exists for.
+		local _, why = backend.resolve({}, probe("Linux", "fcitx5-remote", "ibus", "xkb-switch"))
+		t.eq(why, "fcitx5-remote", "a framework outranks everything below it")
+
+		local b
+		b, why = backend.resolve({}, probe("Linux", "ibus", "xkb-switch"))
+		t.eq(why, "ibus")
+		t.eq(b.get, { "ibus", "engine" })
+		t.eq(b.set, { "ibus", "engine" })
+
+		b, why = backend.resolve({}, probe("Linux", "xkb-switch"))
+		t.eq(why, "xkb-switch")
+		t.eq(b.set, { "xkb-switch", "-s" })
+		t.ok(type(b.note) == "string", "a layout-only backend has to say so")
+
+		-- WSL: a Linux uname with the Windows binary on $PATH. Last, so a real
+		-- Linux desktop that happens to carry the exe is unaffected.
+		b, why = backend.resolve({}, probe("Linux", "im-select.exe"))
+		t.eq(why, "im-select.exe")
+		t.eq(b.english, "1033")
 	end)
 
 	t.test("Windows resolves im-select.exe", function()
@@ -175,7 +209,7 @@ return function(t)
 		_, _, fatal = backend.resolve({}, probe("Darwin"))
 		t.eq(fatal, nil, "a machine with no tool is inert, not misconfigured")
 
-		under_ssh(function()
+		under_ssh("SSH_TTY", function()
 			local _, _, f = backend.resolve({}, probe("Darwin", "tongue"))
 			t.eq(f, nil, "and neither is SSH")
 		end)
@@ -194,19 +228,39 @@ return function(t)
 	-- ── SSH ───────────────────────────────────────────────────────────────────
 
 	t.test("SSH stops auto-detection but never an explicit choice", function()
-		under_ssh(function()
-			local b, why = backend.resolve({}, probe("Darwin", "tongue"))
-			t.eq(b, nil)
-			t.ok(why:find("SSH", 1, true) ~= nil, "the reason must say SSH: " .. why)
+		-- Every variable, not just `SSH_TTY`. The one that reaches Neovim through
+		-- `ssh box` -> `tmux attach` -> `nvim` is `SSH_CONNECTION` -- tmux's
+		-- `update-environment` refreshes that one and not the other -- so a guard
+		-- that reads only `SSH_TTY` misses the case people actually hit, and drives
+		-- an input method on a machine nobody is looking at.
+		for _, name in ipairs(SSH_VARS) do
+			under_ssh(name, function()
+				local b, why = backend.resolve({}, probe("Darwin", "tongue"))
+				t.eq(b, nil, name .. " must stop auto-detection")
+				t.ok(why:find(name, 1, true) ~= nil, "the reason must name the variable that fired: " .. why)
 
-			-- Both explicit forms outrank it. The user said so, and second-guessing
-			-- an explicit setting is how config stops being predictable.
-			t.ok(backend.resolve({ backend = "macism" }, probe("Darwin")) ~= nil, "a named preset must win")
-			t.ok(
-				backend.resolve({ backend = presets.fcitx5 }, probe("Darwin")) ~= nil,
-				"a hand-written backend must win"
-			)
-		end)
+				-- Both explicit forms outrank it. The user said so, and second-guessing
+				-- an explicit setting is how config stops being predictable.
+				t.ok(backend.resolve({ backend = "macism" }, probe("Darwin")) ~= nil, "a named preset must win")
+				t.ok(
+					backend.resolve({ backend = presets.fcitx5 }, probe("Darwin")) ~= nil,
+					"a hand-written backend must win"
+				)
+			end)
+		end
+	end)
+
+	t.test("an exported-but-empty SSH variable is not an SSH session", function()
+		-- `vim.env.SSH_TTY` yields `""` for a variable that is exported and empty,
+		-- and `""` is truthy in Lua -- so the obvious guard leaves the plugin inert
+		-- on a purely local machine and blames SSH for it in `:checkhealth`.
+		for _, name in ipairs(SSH_VARS) do
+			local saved = vim.env[name]
+			vim.env[name] = ""
+			local b = backend.resolve({}, probe("Darwin", "tongue"))
+			vim.env[name] = saved
+			t.ok(b ~= nil, ("an empty %s must not read as an SSH session"):format(name))
+		end
 	end)
 
 	-- ── the contract ──────────────────────────────────────────────────────────

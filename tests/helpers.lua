@@ -77,6 +77,7 @@ function M.arm(o)
 		backend = M.backend,
 		notify = o.notify or false,
 		timeout = o.timeout or 3000,
+		verify = o.verify or false,
 	})
 end
 
@@ -110,7 +111,16 @@ end
 --- `busy` alone is not enough: `finish` can re-enter `cycle` immediately when the
 --- intent moved while a command was running, and the whole point of several
 --- tests is what happens on that second lap.
-function M.settle(timeout)
+---
+--- Times out by THROWING, not by returning false. The old version returned a
+--- boolean that exactly one of forty-odd call sites checked, so a wedged cycle
+--- -- which is precisely the failure mode the hard cases here are about -- left
+--- every other test asserting against whatever stale state was lying around.
+--- Since `en` is both the startup state and the most common expectation, a wedge
+--- usually produced a green run.
+---@param timeout integer?
+---@param opts table? `{ soft = true }` to get the boolean back instead
+function M.settle(timeout, opts)
 	timeout = timeout or 5000
 	local tongue = require("tongue")
 	local t0 = uv.hrtime()
@@ -126,7 +136,16 @@ function M.settle(timeout)
 			end
 		end
 	end
-	return false
+	if opts and opts.soft then
+		return false
+	end
+	error(
+		("settle timed out after %d ms -- a cycle never finished (busy=%s)"):format(
+			timeout,
+			tostring(tongue.status().busy)
+		),
+		2
+	)
 end
 
 return M

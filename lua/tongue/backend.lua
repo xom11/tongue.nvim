@@ -27,8 +27,9 @@ end
 --- Returns `backend` on success, or `nil, err`. A malformed backend is an
 --- error, never a silent fallback to "do nothing" -- a plugin whose entire job
 --- is to stop you typing in the wrong language has no business failing quietly.
----@param b table?
----@return table?, string?
+---@param b tongue.Backend?
+---@return tongue.Backend? backend
+---@return string? err
 function M.validate(b)
 	if type(b) ~= "table" then
 		return nil, "backend must be a table"
@@ -83,6 +84,13 @@ local CANDIDATES = {
 	},
 	Linux = {
 		{ "fcitx5-remote", "fcitx5" },
+		{ "ibus", "ibus" },
+		{ "xkb-switch", "xkb_switch" },
+		-- WSL. A Linux `uname` with the Windows binary on $PATH is what WSL looks
+		-- like from in here, and under WSL the input method that matters is the
+		-- Windows one -- the terminal you are typing into is a Windows window.
+		-- Last, so a real Linux desktop that happens to carry the exe is unaffected.
+		{ "im-select.exe", "im_select_exe" },
 	},
 	Windows_NT = {
 		{ "im-select.exe", "im_select_exe" },
@@ -96,7 +104,8 @@ local CANDIDATES = {
 --- type the name of the program they installed. One rule, not a table of
 --- aliases: everything that is not alphanumeric becomes `_`.
 ---@param name string
----@return table?, string?
+---@return tongue.Backend? backend
+---@return string? err
 local function by_name(name)
 	-- `gsub` returns TWO values; unparenthesised it would index `presets` with
 	-- the name and then pass the match count along as a second argument.
@@ -109,8 +118,32 @@ local function by_name(name)
 	return nil, ("unknown backend preset %q (known: %s)"):format(name, table.concat(known, ", "))
 end
 
+--- Is this an SSH session?
+---
+--- All three variables are set by sshd, and which of them survives to Neovim is
+--- not a detail we get to ignore: tmux's default `update-environment` refreshes
+--- `SSH_CONNECTION` on every client attach but NOT `SSH_TTY` (measured on tmux
+--- 3.7b). Keying off `SSH_TTY` alone therefore misses `ssh box` -> `tmux attach`
+--- -> `nvim` entirely, and the plugin spends a process per mode change driving
+--- an input method on a machine nobody is looking at.
+---
+--- An exported-but-empty variable reads as `""`, which is truthy in Lua and is
+--- how the old check could also fire on a purely local session.
+---@return string? name the variable that fired
+local function ssh_var()
+	for _, name in ipairs({ "SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT" }) do
+		local v = vim.env[name]
+		if type(v) == "string" and v ~= "" then
+			return name
+		end
+	end
+	return nil
+end
+
 --- Which backend, before any `english` override. See `M.resolve`.
----@return table?, string, boolean?
+---@return tongue.Backend? backend
+---@return string reason
+---@return boolean? fatal
 local function pick(opts, probe)
 	-- An explicitly configured backend wins outright, including over SSH: the
 	-- user said so, and second-guessing an explicit setting is how config stops
@@ -132,8 +165,13 @@ local function pick(opts, probe)
 	-- is the one on the machine in front of you, and that is the client's, not
 	-- this one's -- switching here would change nothing you can see while
 	-- spawning a process on every mode change.
-	if vim.env.SSH_TTY then
-		return nil, "SSH session (auto-detection skipped; set `backend` explicitly to override)"
+	local ssh = ssh_var()
+	if ssh then
+		-- Naming the variable makes `:checkhealth` actionable: a stale `SSH_TTY`
+		-- inherited from a tmux server that was first started over SSH is the one
+		-- way this fires when it should not, and you cannot fix what you cannot see.
+		return nil,
+			("SSH session (%s is set; auto-detection skipped, set `backend` explicitly to override)"):format(ssh)
 	end
 
 	local sysname = probe.sysname or (vim.uv or vim.loop).os_uname().sysname
@@ -167,9 +205,11 @@ end
 --- survives for months. `init.lua` needs to tell them apart and cannot do it by
 --- reading `opts`: whether `english` is wrong depends on which backend received
 --- it.
----@param opts table?
+---@param opts tongue.Opts?
 ---@param probe table? `{ sysname: string, executable: fun(name):boolean }`, partial
----@return table?, string, boolean? `true` when the reason is a config bug
+---@return tongue.Backend? backend
+---@return string reason
+---@return boolean? fatal `true` when the reason is a config bug
 function M.resolve(opts, probe)
 	opts = opts or {}
 
@@ -220,16 +260,28 @@ end
 ---
 --- This lives here rather than in `init.lua` because it is pure and depends only
 --- on the backend -- which makes it directly testable.
----@param b table backend
+---
+--- The third return separates "the machine is in English" from "the backend has
+--- no idea what the machine is in", and that separation is load-bearing. Both
+--- used to come back as `english`, with two silent consequences: a shrug erased
+--- the layout you were typing in (the `observe` branch read it as a deliberate
+--- switch to English), and -- worse -- Normal mode stopped being forced at all,
+--- because "already English" means no `set` is issued. Reachable with the shipped
+--- presets: `im-select.exe` answers `0` whenever there is no foreground window,
+--- and `tongue` answers `unknown` whenever the live state matches no configured
+--- mode.
+---@param b tongue.Backend
 ---@param raw string?
----@return string?, string?
+---@return string? token `english` when unknown, so a caller can still act
+---@return string? err
+---@return boolean? unknown the backend does not recognise the live state
 function M.sanitize(b, raw)
 	local s = (raw or ""):gsub("^%s+", ""):gsub("%s+$", "")
 	if s == "" then
 		return nil, "empty output"
 	end
 	if b.unknown and s == b.unknown then
-		return b.english
+		return b.english, nil, true
 	end
 	if s:find("%s") then
 		return nil, "multi-token output"

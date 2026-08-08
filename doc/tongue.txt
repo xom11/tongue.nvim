@@ -1,18 +1,23 @@
-*tongue.txt*   Input-method switching for IMEs that are a process, not a source
+*tongue.txt*   Input-method switching for IMEs that are a process, not a
+source
 
+                                                                 *tongue.nvim*
 ==============================================================================
-CONTENTS                                                      *tongue-contents*
+CONTENTS                                                     *tongue-contents*
 
     1. Introduction ......................... |tongue-introduction|
     2. Requirements ......................... |tongue-requirements|
     3. Setup ................................ |tongue-setup|
     4. Behaviour ............................ |tongue-behaviour|
-    5. Custom backends ...................... |tongue-backends|
-    6. Health ............................... |tongue-health|
-    7. Limitations .......................... |tongue-limitations|
+    5. Commands ............................. |tongue-commands|
+    6. Lua API .............................. |tongue-api|
+    7. Statusline ........................... |tongue-statusline|
+    8. Custom backends ...................... |tongue-backends|
+    9. Health ............................... |tongue-health|
+   10. Limitations .......................... |tongue-limitations|
 
 ==============================================================================
-1. INTRODUCTION                                           *tongue-introduction*
+1. INTRODUCTION                                          *tongue-introduction*
 
 tongue.nvim forces English in Normal mode and restores the input method you
 were last typing with when you enter Insert or Terminal-insert mode.
@@ -24,16 +29,20 @@ input source. A plugin that switches input-source IDs cannot express the
 difference at all. tongue.nvim drives the `tongue` CLI, which moves both the
 layout and the IME process.
 
-Two design properties are load-bearing:
+Three design properties are load-bearing:
 
 - Nothing blocks the UI. A backend read costs 40-50ms, and the obvious
   implementation pays that on every exit from Insert mode.
 - Mode tracking uses |ModeChanged|, not |InsertLeave|. `i_CTRL-C` leaves
   Insert mode WITHOUT firing InsertLeave (see |i_CTRL-C|), which would strand
   you in Normal mode with the IME still on, indefinitely.
+- A process is spawned only when it can change something. Leaving Insert reads
+  the machine, because a switch made by hand can only be learned from it;
+  entering Insert does not, because the plugin forced English on the way out
+  and knows it landed. See |tongue-behaviour|.
 
 ==============================================================================
-2. REQUIREMENTS                                           *tongue-requirements*
+2. REQUIREMENTS                                          *tongue-requirements*
 
 Neovim 0.10 or newer -- |vim.system()| is the only command runner that both
 separates stderr from stdout and supports a timeout, and both matter here.
@@ -44,54 +53,65 @@ A backend on $PATH. Auto-detection takes the first one it finds, in order:
               macism          https://github.com/laishulu/macism
               im-select       https://github.com/daehahn/im-select
     Linux     fcitx5-remote   (ships with fcitx5)
+              ibus            (ships with ibus -- the GNOME default)
+              xkb-switch      https://github.com/grwlf/xkb-switch
+              im-select.exe   (WSL: the Windows IME is the visible one)
     Windows   im-select.exe
     other     supply your own, see |tongue-backends|
 
 Note: the `tongue` crate on crates.io is an unrelated program. Do not install
 it with `cargo install tongue`; use the repository above.
 
-`tongue` comes first on macOS deliberately. macism and im-select read and write
-input-source IDs, which is the weaker lever: with an external IME, "vi" and "en"
-are the SAME input source and they cannot tell them apart. They are still worth
-detecting -- macOS's own Vietnamese, Japanese and Chinese input sources are
-served fine by them -- and |tongue-health| says so out loud when you land on one.
+The order is a promise. On macOS, macism and im-select read and write
+input-source IDs, which is the weaker lever: with an external IME, "vi" and
+"en" are the SAME input source and they cannot tell them apart. On Linux, an
+input-method framework (fcitx5, ibus) outranks xkb-switch for the same reason
+-- xkb-switch moves the keyboard layout and cannot see that a framework is
+running at all. The weaker backends are still worth detecting -- the OS's own
+Vietnamese, Japanese and Chinese input sources are served fine by them -- and
+|tongue-health| says so out loud when you land on one.
 
 ==============================================================================
-3. SETUP                                                         *tongue-setup*
+3. SETUP                                                        *tongue-setup*
 
-                                                             *tongue.setup()*
+                                                              *tongue.setup()*
 >lua
     require("tongue").setup({
       backend = nil,    -- preset name or table, see |tongue-backends|
       english = nil,    -- override the resolved backend's English token
       notify  = true,   -- warn on backend failure (throttled, 30s per kind)
-      timeout = 2000,   -- per-command deadline in milliseconds
+      timeout = 2000,   -- per-command deadline in milliseconds, minimum 100
+      verify  = false,  -- read the machine before every switch
     })
 <
 `backend` accepts a preset name as well as a table: >lua
 
-    require("tongue").setup({ backend = "macism" })
-    require("tongue").setup({ backend = "im-select" })  -- `im_select` too
-<
-`english` applies to whatever backend was resolved, auto-detected included, and
-is validated against it. The common case needs nothing else: >lua
+    require("tongue").setup({ backend = "macism" }) require("tongue").setup({
+    backend = "im-select" })  -- `im_select` too < `english` applies to
+    whatever backend was resolved, auto-detected included, and is validated
+    against it. The common case needs nothing else: >lua
 
     -- macism is installed; this machine types on US, not ABC
     require("tongue").setup({ english = "com.apple.keylayout.US" })
 <
 Get `english` right. Measured on macism 3.1.1: an input source that does not
 exist on this machine makes it print "Input source ... does not exist!" on
-STDOUT and exit 0 -- a failure with no exit code to read. The plugin catches it
-(a `set` that prints anything counts as failed, and warns), but |tongue-health|
-cannot: it only ever reads. Verify by hand once: `macism <id>` then `macism`
-should read it back.
+STDOUT and exit 0 -- a failure with no exit code to read. The plugin catches
+that (a `set` that prints anything counts as failed, and warns), but
+|tongue-health| cannot: it only ever reads. Verify by hand once: `macism <id>`
+then `macism` should read it back.
+
+`timeout` is validated rather than silently defaulted. Below 100ms the
+deadline fires before a healthy backend can answer, which is indistinguishable
+from a broken backend; a non-number, or 0, or a negative value, each break the
+deadline in their own way. All of them are reported as config bugs.
 
 The deadline is enforced by the plugin, not merely passed to |vim.system()|.
-That matters when writing a backend: vim.system's own timeout kills the process
-it started but still waits for the stdout pipe to close, and a shell wrapper
-running its work in a subprocess leaves a grandchild holding that pipe. Measured:
-a wrapper forking `sleep 5` with timeout=200 called back after 5016ms; the same
-script using `exec` came back at 202ms.
+That matters when writing a backend: vim.system's own timeout kills the
+process it started but still waits for the stdout pipe to close, and a shell
+wrapper running its work in a subprocess leaves a grandchild holding that
+pipe. Measured: a wrapper forking `sleep 5` with timeout=200 called back after
+5016ms; the same script using `exec` came back at 202ms.
 
 setup() is required. Nothing happens on `require` alone.
 
@@ -99,37 +119,142 @@ With no supported backend, and in SSH sessions, the plugin stays inert. That
 is deliberate, not a failure: over SSH the input method that matters is the
 client's.
 
-`notify = false` silences runtime warnings only. A malformed `backend` or
-`english` is always reported, because a config bug that silently disables the
-plugin is the exact failure this plugin exists to prevent. Being inert is not a
-config bug and stays silent.
-
-                                                            *tongue.status()*
-Returns a table describing the resolved backend and current state. Used by
-|tongue-health|; also useful when reporting a bug.
+`notify = false` silences runtime warnings only. A malformed `backend`,
+`english` or `timeout` is always reported, because a config bug that silently
+disables the plugin is the exact failure this plugin exists to prevent. Being
+inert is not a config bug and stays silent.
 
 ==============================================================================
-4. BEHAVIOUR                                                 *tongue-behaviour*
+4. BEHAVIOUR                                                *tongue-behaviour*
 
     starting Neovim         read once, remember it, force English
     entering Insert/Term    restore the remembered token
     leaving Insert          force English -- including <C-c>, macros, :normal!
     manual switch in Insert noticed on the way out, restored next time
     completion, i_CTRL-O    nothing; these never leave Insert
-    FocusGained in Normal   re-assert English
+    FocusGained in Normal   re-read the machine, re-assert English
 
 All backend calls are asynchronous and single-flight: a burst of 60 mode
 changes costs one process.
 
+                                                            *tongue-fast-path*
+Most boundaries cost nothing at all. Leaving Insert always reads the machine
+-- a switch you made by hand can only be learned from it -- but entering
+Insert does not: the plugin forced English on the way out and knows it landed,
+so it issues the restore directly instead of asking a question it holds the
+answer to. Measured against the test fixture, an Insert round trip went from
+four processes to three, and a session that never leaves English from two to
+one. The restore also lands one whole read (40-50ms with `tongue`) sooner.
+
+What that gives up is one case: an input method changed by hand IN NORMAL
+MODE, with no focus event to notice it. That change now survives into Insert
+instead of being overwritten. `verify = true` buys the old
+read-before-every-switch behaviour back.
+
 ==============================================================================
-5. CUSTOM BACKENDS                                            *tongue-backends*
+5. COMMANDS                                                  *tongue-commands*
+
+                                                                     *:Tongue*
+One command, one subcommand, with completion:
+
+    :Tongue                 same as :Tongue status
+    :Tongue status          what the plugin is doing, spawning nothing
+    :Tongue toggle          stop / start acting
+    :Tongue enable          start acting; re-learns rather than trusting a
+                            cache that may be stale
+    :Tongue disable         stop acting; the input method is left where it is
+    :Tongue sync            re-read the machine and re-assert
+
+`:Tongue status` is instant and says what the plugin INTENDS. |tongue-health|
+spawns the backend and says whether it WORKS. Reach for the first when the
+behaviour surprises you, the second when nothing happens at all.
+
+==============================================================================
+6. LUA API                                                        *tongue-api*
+
+                                                             *tongue.enable()*
+                                                            *tongue.disable()*
+                                                             *tongue.toggle()*
+                                                               *tongue.sync()*
+>lua
+    require("tongue").enable()   --> boolean: false if there is no backend
+    require("tongue").disable()
+    require("tongue").toggle()   --> boolean: the state it left behind
+    require("tongue").sync()
+<
+`disable()` leaves the input method exactly where it is. Switching it on the
+way out would be a surprise in one direction or the other, and your own hotkey
+is one keystroke away.
+
+`sync()` is for an input method changed outside Neovim without Neovim ever
+losing focus -- the one case |tongue-fast-path| cannot see by itself.
+
+                                                              *tongue.token()*
+                                                             *tongue.layout()*
+>lua
+    require("tongue").token()    --> "vi", or nil when inert/disabled
+    require("tongue").layout()   --> the token Insert mode will restore
+<
+`token()` is the INTENT, not a reading: it is right the instant the mode
+changes, some 200ms before the machine gets there. That is what a statusline
+wants; see |tongue-statusline|.
+
+                                                             *tongue.status()*
+Returns a table describing the resolved backend and the current state. Used by
+|tongue-health| and by `:Tongue status`; also what to paste into a bug report.
+Fields: `enabled`, `attached`, `misconfigured`, `reason`, `backend` (a copy),
+`last_layout`, `inserting`, `busy`, `observe`, `applied`, `timeout`, `verify`.
+
+==============================================================================
+7. STATUSLINE                                              *tongue-statusline*
+
+                                                         *tongue.statusline()*
+>lua
+    require("lualine").setup({
+      sections = { lualine_x = { require("tongue").statusline } },
+    })
+<
+It returns the empty string whenever there is nothing worth saying, which is
+most of the time. Three optional keys: >lua
+
+    require("tongue").statusline({
+      format   = " %s",  -- anything that is not English  (default "%s")
+      english  = "",     -- while English is in force     (default "")
+      inactive = "",     -- while inert or disabled       (default "")
+    })
+<
+                                                               *TongueChanged*
+A |User| autocommand event, fired only when |tongue.token()| or
+|tongue.layout()| can have changed -- never on completion churn, never on the
+59 coalesced mode changes of a burst. So a component can refresh on the event
+rather than polling: >lua
+
+    vim.api.nvim_create_autocmd("User", {
+      pattern = "TongueChanged",
+      callback = function(ev)
+        -- ev.data = { token = "vi", layout = "vi", inserting = true }
+        vim.cmd.redrawstatus()
+      end,
+    })
+<
+`ev.data.token` and `ev.data.layout` are BOTH nil while the plugin is inert or
+disabled, and that firing is the point: it is what tells a component to clear
+itself after `:Tongue disable`. Handle nil, or use |tongue.statusline()|,
+which does it for you.
+
+The same surface is the hook for what the plugin deliberately does not do
+itself -- turning it off inside a fuzzy-finder prompt, for instance, with
+`disable()` on FileType and `enable()` on BufLeave.
+
+==============================================================================
+8. CUSTOM BACKENDS                                           *tongue-backends*
 
 A backend is a table: >lua
 
     {
-      english = "1033",               -- token forced in Normal mode (required)
-      get     = { "im-select.exe" },  -- argv, prints current token  (required)
-      set     = { "im-select.exe" },  -- argv, token appended        (required)
+      english = "1033",              -- token forced in Normal mode (required)
+      get     = { "im-select.exe" }, -- argv, prints current token  (required)
+      set     = { "im-select.exe" }, -- argv, token appended        (required)
       unknown = nil,                  -- token meaning "unrecognised"
       tokens  = nil,                  -- allow-list, nil = any single word
       note    = nil,                  -- shown by |tongue-health|, no effect
@@ -140,71 +265,102 @@ whitespace is REJECTED rather than cleaned up: readers that merge stderr into
 stdout turn a stray warning line into one plausible-looking token, which then
 gets stored and replayed as an argument forever.
 
-`set` must be SILENT on success. Anything it writes to stdout counts as failure
-and is warned about, whatever the exit code says -- `tongue en` and
-`fcitx5-remote -s` print nothing, while macism 3.1.1 reports a nonexistent input
-source exactly that way and still exits 0. A backend with no exit code worth
-reading leaves its output as the only evidence there is.
+`set` must be SILENT on success. Anything it writes to stdout counts as
+failure and is warned about, whatever the exit code says -- `tongue en` and
+`fcitx5-remote -s` print nothing, while macism 3.1.1 reports a nonexistent
+input source exactly that way and still exits 0. A backend with no exit code
+worth reading leaves its output as the only evidence there is.
+
+`unknown` is what the backend prints when it does not recognise the live
+state. It is NOT treated as English: a shrug is not evidence, so the plugin
+neither learns a layout from it nor concludes "already English" and skips the
+switch. Forcing English is what should happen there, and it does.
 
 If `tokens` is given it must contain `english`.
 
 Presets: `require("tongue.presets")` -- `.tongue`, `.macism`, `.im_select`,
-`.im_select_exe`, `.fcitx5`.
+`.im_select_exe`, `.fcitx5`, `.ibus`, `.xkb_switch`.
 
 What has been run, and what has not:
 
 macism          verified end to end on macOS 26.5.1, Neovim 0.12.4, macism
-                3.1.1, against the real macOS Vietnamese IM. Auto-detected when
+                3.1.1, against the real macOS Vietnamese IM. Picked when
                 tongue is absent; outranked by tongue when both are present.
                 Reads cost ~22ms (tongue: ~40-50ms, it moves an IME too).
 im-select.exe   driven end to end on Windows 11 ARM64, Neovim 0.12.4, as a
                 hand-written backend. Auto-detection verified there too: uname
-                says Windows_NT, the chain resolves im-select.exe, and `english`,
+                says Windows_NT, it resolves im-select.exe, and `english`,
                 `backend = "im-select.exe"` and a rejected malformed `english`
                 all behave as documented. The pure specs (mode, sanitize,
-                backend -- 33 tests) pass under Windows Neovim; the rest of the
-                suite does not run there, because tests/fixtures/fake-im is a
-                POSIX shell script. That is the harness, not the plugin.
-im-select       not run. Same shape as macism; covered as a chain and as data.
+                backend) run on a real Windows runner in CI; the rest of the
+                suite cannot, because tests/fixtures/fake-im is a POSIX shell
+                script. That is the harness, not the plugin.
+im-select       NOT run against the binary. Same shape as macism.
+fcitx5          NOT run against the binary.
+ibus            NOT run against the binary. `ibus engine` prints the active
+                engine, `ibus engine <name>` selects one; `ibus list-engine`
+                prints the names this machine has.
+xkb-switch      NOT run against the binary. Moves the X keyboard layout only,
+                hence the note and its place last in the Linux chain.
 
 Every OS chain, Linux and Windows included, is exercised from a Mac:
 tests/backend_spec.lua drives resolve() through an injected prober rather than
-asking the real machine.
+asking the real machine. That tests the CHAIN, not the binaries.
 
 ==============================================================================
-6. HEALTH                                                       *tongue-health*
+9. HEALTH                                                      *tongue-health*
 
 >vim
     :checkhealth tongue
 <
-Reports which backend was resolved and why, runs one real read, and flags a
-backend that writes to stderr on success or answers with something outside its
-declared token set -- which is what a name collision looks like from here.
+Reports which backend was resolved and why, whether it is currently disabled,
+resolves both the `get` and the `set` binary to full paths, runs one real read
+within the configured `timeout`, and flags a backend that writes to stderr on
+success or answers with something outside its declared token set -- which is
+what a name collision looks like from here.
+
+A CONFIG BUG is reported as an error, not as the same neutral note as "there
+is no IME tool on this machine". The distinction matters: the startup
+notification has long scrolled away by the time anyone runs this.
 
 It also prints the resolved backend's `note` if it has one. That is where you
-find out that macism or im-select cannot see an external IME: the plugin looks
-identical from the outside whether it is enforcing English or merely reselecting
-an input source that was never what made you type Vietnamese.
+find out that macism, im-select or xkb-switch cannot see an external IME: the
+plugin looks identical from the outside whether it is enforcing English or
+merely reselecting an input source that was never what made you type
+Vietnamese.
 
 ==============================================================================
-7. LIMITATIONS                                             *tongue-limitations*
+10. LIMITATIONS                                           *tongue-limitations*
 
 - Command-line mode counts as Normal. Correct for `:`, arguably wrong for `/`;
   the mode string cannot distinguish them.
 
-- The SSH guard does not fire on Windows. It keys off $SSH_TTY, and Windows
-  OpenSSH does not set it (measured on Windows 11 ARM64). So Neovim run over SSH
-  into Windows DOES auto-detect im-select.exe -- and im-select.exe reads the
-  foreground window's layout, which an SSH session has none of, so it answers
-  "0". The preset declares "0" as its no-idea sentinel, so that reads as English
-  instead of being remembered as a layout, and the plugin then settles and does
-  nothing further. Verified on that machine. Inert in effect, just not by the
-  route it takes on every other OS.
+- The SSH guard reads the environment, and environments lie. It fires on
+  $SSH_TTY, $SSH_CONNECTION or $SSH_CLIENT -- all three, because tmux's
+  `update-environment` refreshes SSH_CONNECTION on attach and never SSH_TTY,
+  so `ssh box` -> `tmux attach` -> `nvim` arrives with only the former. A tmux
+  server first started inside an SSH session keeps a stale value for as long
+  as it lives, leaving the plugin inert locally; |tongue-health| names the
+  variable that fired so you can see that is what happened. Windows OpenSSH
+  sets none of the three (measured on Windows 11 ARM64), so Neovim run over
+  SSH INTO Windows does auto-detect im-select.exe -- which needs a foreground
+  window and answers "0" without one. That "0" is declared as the backend's
+  no-idea sentinel, so it is no longer mistaken for a layout to restore, but
+  nothing useful happens.
+
 - A switch takes as long as the backend takes (~200ms for `tongue`, which
   starts and stops an IME process). The window after leaving Insert where the
   switch has not landed cannot be closed from inside an editor plugin.
+
 - A manual switch made while one of our commands is already in flight, and
   followed immediately by leaving Insert, is missed. It corrects itself on the
   next Insert session.
+
+- An input method changed by hand in NORMAL mode survives into Insert rather
+  than being overwritten, because entering Insert no longer re-reads the
+  machine. Set `verify = true` for the old behaviour. See |tongue-fast-path|.
+
+- The layout is remembered per Neovim, not per buffer: one token, whichever
+  buffer you were in when you chose it.
 
 vim:tw=78:ts=8:noet:ft=help:norl:

@@ -16,9 +16,18 @@ return function(t)
 		t.eq(backend.sanitize(B, "  zh  \n"), "zh")
 	end)
 
-	t.test("maps the backend's `unknown` sentinel to English", function()
-		-- Feeding "unknown" back would just be `tongue unknown` -> exit 2.
-		t.eq(backend.sanitize(B, "unknown\n"), "en")
+	t.test("maps the backend's `unknown` sentinel to English, and SAYS it did", function()
+		-- Feeding "unknown" back would just be `tongue unknown` -> exit 2, so it
+		-- has to arrive as something the caller can act on. The third return is
+		-- what stops the caller mistaking it for a real reading -- see the state
+		-- test named for the shrug.
+		local tok, err, unknown = backend.sanitize(B, "unknown\n")
+		t.eq(tok, "en")
+		t.eq(err, nil)
+		t.eq(unknown, true, "the caller has to be able to tell a shrug from a reading")
+
+		local _, _, real = backend.sanitize(B, "en\n")
+		t.eq(real, nil, "a genuine English reading is not a shrug")
 	end)
 
 	t.test("rejects empty output", function()

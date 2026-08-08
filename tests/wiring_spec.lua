@@ -69,9 +69,23 @@ return function(t)
 		return vim.system({ vim.v.progpath, "--server", sock, "--remote-send", keys }, { text = true }):wait(5000)
 	end
 
+	--- Evaluate an expression in the throwaway editor, or throw.
+	---
+	--- The throw is the point. This used to hand back `""` for a dead server, an
+	--- unreachable socket or an expression that errored -- and the one assertion
+	--- this whole file exists to make compares two of these values to each other.
+	--- With both empty it passed, agreeing with itself, while proving nothing
+	--- about `<C-c>` or about why this plugin listens to ModeChanged at all.
 	local function expr(e)
 		local out = vim.system({ vim.v.progpath, "--server", sock, "--remote-expr", e }, { text = true }):wait(5000)
-		return (out.stdout or ""):gsub("%s+$", ""), out.code
+		local value = (out.stdout or ""):gsub("%s+$", "")
+		if out.code ~= 0 or value == "" then
+			error(
+				("--remote-expr %s failed (code=%s, stderr=%s)"):format(e, tostring(out.code), tostring(out.stderr)),
+				2
+			)
+		end
+		return value
 	end
 
 	local function shutdown()
@@ -117,6 +131,7 @@ return function(t)
 
 	t.test("real editor: <C-c> forces English even though InsertLeave never fires", function()
 		local before = expr('luaeval("_G.insert_leaves")')
+		t.ok(tonumber(before) ~= nil, "the counter must be a real number, not a failed query: " .. before)
 		send("<C-c>")
 		t.ok(
 			wait_until(function()

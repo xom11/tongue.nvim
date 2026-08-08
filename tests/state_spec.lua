@@ -253,7 +253,12 @@ return function(t)
 	t.test("an unreadable backend never restores blind", function()
 		-- Forcing English on a failed read is safe; restoring is not -- guessing
 		-- wrong drops you into Normal mode with an IME on.
-		h.arm({ machine = "vi" })
+		--
+		-- `verify` on purpose. This is the guard on the READ path, and the fast
+		-- path in `cycle` takes no read at all, so it cannot reach this branch --
+		-- what it does instead is the test below. Arming without `verify` here
+		-- would quietly stop exercising the branch this test is named for.
+		h.arm({ machine = "vi", verify = true })
 		h.settle()
 		h.enter()
 		h.settle()
@@ -268,6 +273,115 @@ return function(t)
 		vim.env.FAKE_IM_FAIL = nil
 		t.ok(#h.calls() > calls_before, "it must at least have tried to read")
 		t.eq(h.count("set"), sets_before, "but must not have issued a blind restore")
+		h.leave()
+		h.settle()
+	end)
+
+	t.test("a backend that breaks mid-session still ends Normal mode in English", function()
+		-- The fast path trusts `applied` and issues the restore with no read, so
+		-- the guard above cannot apply to it. What has to survive instead is the
+		-- invariant that actually matters: however badly the backend behaves,
+		-- leaving Insert ends in English -- and a `set` that could not be believed
+		-- is never recorded as applied, so the very next cycle drops back to
+		-- reading rather than compounding the lie.
+		h.arm({ machine = "vi" })
+		h.settle()
+		h.enter()
+		h.settle()
+		t.eq(h.machine(), "vi", "precondition")
+		h.leave()
+		h.settle()
+		t.eq(h.machine(), "en", "precondition")
+
+		vim.env.FAKE_IM_FAIL = "1"
+		h.enter()
+		h.settle()
+		t.eq(st().applied, nil, "a set that failed must not be recorded as applied")
+		vim.env.FAKE_IM_FAIL = nil
+
+		h.leave()
+		h.settle()
+		t.eq(h.machine(), "en", "Normal mode must still end in English")
+	end)
+
+	t.test("a backend that shrugs still gets English forced, and keeps the layout", function()
+		-- `tongue` prints `unknown` when the live state matches no configured mode,
+		-- and `im-select.exe` prints `0` when there is no foreground window. Both
+		-- used to arrive as plain "English", with two silent consequences: the
+		-- `observe` branch read the shrug as a deliberate switch and forgot the
+		-- layout, and -- worse -- "already English" meant no `set` was issued at
+		-- all, so Normal mode quietly stopped being forced. That is the plugin's
+		-- one guarantee, failing without a word.
+		h.arm({ machine = "vi" })
+		h.settle()
+		h.enter()
+		h.settle()
+		t.eq(st().last_layout, "vi", "precondition")
+		t.eq(h.machine(), "vi", "precondition")
+
+		h.set_machine("unknown")
+		h.leave()
+		h.settle()
+		t.eq(h.machine(), "en", "a shrug is not English; English must still be forced")
+		t.eq(st().last_layout, "vi", "and the remembered layout must survive it")
+		t.eq(st().observe, true, "a shrug is not evidence, so the observation must still be pending")
+	end)
+
+	t.test("a reading belongs to the setup() that started it", function()
+		-- `:Lazy reload`, and every config reload, calls `setup()` again -- possibly
+		-- while a command is still running. That command was started by the
+		-- configuration BEFORE the reload, and its answer speaks that backend's
+		-- vocabulary. Adopting it consumes the new `observe` and writes
+		-- `last_layout` from a token the new backend has never heard of.
+		--
+		-- Three things make this safe and all three are here: the reading is
+		-- dropped by session, `epoch` is bumped rather than reset to 0 (a reset let
+		-- a stale reading satisfy the freshness check), and the backend is captured
+		-- at call time so the callback never indexes a `cfg` that `setup()` has
+		-- since set to nil.
+		h.arm({ machine = "zh", delay = 300 })
+		vim.wait(60)
+		t.eq(st().busy, true, "precondition: the startup read must still be running")
+
+		-- The second configuration cannot read at all, so its `observe` stays
+		-- pending -- and a pending `observe` is precisely the window in which a
+		-- stale reading does damage. Arming a working backend instead lets the new
+		-- session consume its own `observe` within milliseconds, and the test
+		-- passes against the bug it is named for.
+		h.arm({ machine = "en", fail = true })
+		vim.wait(400) -- the previous configuration's 300 ms read lands in here
+		vim.env.FAKE_IM_FAIL = nil
+
+		t.eq(st().observe, true, "precondition: the new session must still be waiting to learn")
+		t.eq(st().last_layout, "en", "and it must not learn it from the previous backend's reading")
+		t.eq(st().busy, false, "nor be left with the latch down")
+	end)
+
+	t.test("setup() that rejects its config releases everything the old one held", function()
+		-- The rejected path used to return before resetting `busy`, so a command
+		-- in flight left the latch down for the rest of the session -- the plugin
+		-- dead, silently, which is the exact failure `run`'s pcall exists to stop.
+		h.arm({ machine = "vi", delay = 300 })
+		h.settle()
+		h.enter()
+		vim.wait(60)
+		t.eq(st().busy, true, "precondition: a command must actually be in flight")
+
+		local real = vim.notify
+		vim.notify = function() end
+		require("tongue").setup({ backend = { english = "en" }, notify = false }) -- rejected
+		vim.wait(500)
+		vim.notify = real
+
+		t.eq(st().enabled, false, "the new configuration is the one that counts")
+		t.eq(st().misconfigured, true, "and it must be remembered as a config bug, not as inertness")
+		t.eq(st().busy, false, "the latch must be down")
+
+		h.arm({ machine = "vi" })
+		h.settle()
+		h.enter()
+		h.settle()
+		t.eq(h.machine(), "vi", "a rejected setup must not poison the next one")
 		h.leave()
 		h.settle()
 	end)

@@ -18,6 +18,12 @@ local INPUT_SOURCE_ONLY = "this backend reads and writes the OS input-source ID 
 	.. "SAME input source, so it cannot tell them apart: it will run, and change nothing you can see. "
 	.. "On macOS, install `tongue` (github.com/xom11/tongue) if you use one of those."
 
+--- The same warning one level lower down, for a backend that moves the keyboard
+--- layout and does not even know an input method exists.
+local LAYOUT_ONLY = "this backend reads and writes the X keyboard layout only. It does not know about ibus, fcitx "
+	.. "or any other input-method framework, so if one is running, it is what decides whether you type Vietnamese "
+	.. "-- and this cannot see it. Prefer the preset for whichever framework you run."
+
 return {
 	--- github.com/xom11/tongue -- macOS, and the reason this plugin exists.
 	---
@@ -99,5 +105,37 @@ return {
 		english = "keyboard-us",
 		get = { "fcitx5-remote", "-n" },
 		set = { "fcitx5-remote", "-s" },
+	},
+
+	--- ibus, via its own CLI. Linux -- the default on GNOME.
+	---
+	--- `ibus engine` prints the active engine; `ibus engine <name>` selects one.
+	--- Same shape as every other backend here, which is why it costs a table
+	--- rather than a branch.
+	---
+	--- `xkb:us::eng` is the plain US layout as ibus names it. A machine whose
+	--- English engine is something else says so with `english = "..."`; `ibus
+	--- list-engine` prints the names this machine actually has.
+	---
+	--- No `note`: unlike macism, ibus IS the IME. Selecting an engine turns the
+	--- Vietnamese one off, which is the lever that matters.
+	ibus = {
+		english = "xkb:us::eng",
+		get = { "ibus", "engine" },
+		set = { "ibus", "engine" },
+	},
+
+	--- xkb-switch -- github.com/grwlf/xkb-switch. Linux/X11.
+	---
+	--- The lowest lever available: it moves the X keyboard layout and knows
+	--- nothing about any IME, so it is last in the Linux chain rather than absent.
+	--- On a machine with no input-method framework at all -- a plain us/vn XKB
+	--- layout pair -- it is exactly right, and on a machine with one it carries
+	--- the same blind spot macism does.
+	xkb_switch = {
+		english = "us",
+		get = { "xkb-switch" },
+		set = { "xkb-switch", "-s" },
+		note = LAYOUT_ONLY,
 	},
 }

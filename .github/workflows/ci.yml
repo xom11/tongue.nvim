@@ -1,10 +1,20 @@
 name: ci
+
 on:
+  # `push` alone would run every PR branch twice: once for the push, once for
+  # the pull_request event. Restricting push to the default branch keeps the
+  # main-branch history checked without paying for it on every PR commit.
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
+    name: test (${{ matrix.os }}, ${{ matrix.nvim }})
     strategy:
       fail-fast: false
       matrix:
@@ -20,7 +30,30 @@ jobs:
         with:
           neovim: true
           version: ${{ matrix.nvim }}
-      - run: nvim --headless -l tests/run.lua
+      # Through the Makefile, deliberately. CI used to run `nvim --headless -l`
+      # while the README published `nvim --headless --clean -u NONE -l`, and the
+      # two are not equivalent: under plain `-l` the runtimepath still contains
+      # the user's config directory. It passed here only because a runner has no
+      # config. One target, one command, no way for them to drift again.
+      - run: make lint
+      - run: make test
+
+  windows:
+    # `tests/fixtures/fake-im` is a POSIX shell script, so every spec that drives
+    # a backend fails on ENOENT here. `mode`, `sanitize` and `backend` touch
+    # nothing but Lua -- and `backend` is the one that resolves the Windows
+    # chain, which is precisely the branch that shipped broken once already.
+    # The README has claimed these pass on Windows since a single hand
+    # measurement; this is what keeps the claim true.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+      - run: nvim --headless --clean -u NONE -l tests/lint.lua
+      - run: nvim --headless --clean -u NONE -l tests/run.lua mode sanitize backend
 
   stylua:
     runs-on: ubuntu-latest
@@ -30,4 +63,22 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: latest
-          args: --check lua tests
+          args: --check lua plugin tests
+
+  docs:
+    # `doc/tags` is generated and not committed, so a malformed tag is invisible
+    # until a user's `:help tongue-something` finds nothing. `helptags` is the
+    # only thing that reads the file the way `:help` does.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+      - name: helptags must generate without a warning
+        run: |
+          out=$(make doc 2>&1 | grep -v '^nvim ' || true)
+          echo "$out"
+          test -z "$out"
+          test -s doc/tags
