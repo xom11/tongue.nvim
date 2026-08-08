@@ -295,6 +295,46 @@ return function(t)
 		t.eq(s.reason, "backend.get must be a non-empty list of strings")
 	end)
 
+	t.test("a `set` that exits 0 but prints is the failure it looks like", function()
+		-- Measured on macism 3.1.1: setting an input source that does not exist
+		-- prints `Input source ... does not exist!` on STDOUT and exits 0. There
+		-- is no exit code to read, so what it printed is the only signal there is
+		-- -- and without this the plugin records the set as applied, says nothing,
+		-- and switches nothing for the rest of the session.
+		--
+		-- Every built-in backend is silent on a successful set: `tongue en` writes
+		-- to neither stream, and so does the fixture.
+		local real = vim.notify
+		local seen = {}
+		vim.notify = function(msg)
+			seen[#seen + 1] = tostring(msg)
+		end
+		local ok, err = pcall(function()
+			h.arm({ machine = "vi", set_noise = "Input source en does not exist!", notify = true })
+			h.settle()
+			vim.wait(200, function()
+				return #seen > 0
+			end)
+		end)
+		vim.notify = real
+		t.ok(ok, "must not throw: " .. tostring(err))
+
+		t.eq(h.machine(), "vi", "the fixture must not have moved -- that is the point of the case")
+		t.eq(st().applied, nil, "a set we cannot trust must not be recorded as applied")
+
+		local told = false
+		for _, msg in ipairs(seen) do
+			if msg:find("does not exist", 1, true) then
+				told = true
+			end
+		end
+		t.ok(told, "and the user has to be told: " .. vim.inspect(seen))
+
+		-- It must not spin: `finish` re-derives the intent, which has not moved,
+		-- so a permanently failing set costs one attempt per boundary and no more.
+		t.ok(h.count("set") <= 2, ("a failing set must not loop; got %d"):format(h.count("set")))
+	end)
+
 	t.test("a config bug in `english` alone is still announced", function()
 		-- `backend` used to be the only knob that could produce a config error, so
 		-- the error path only ever checked that one. `english` can too, and a

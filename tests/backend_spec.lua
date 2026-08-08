@@ -238,6 +238,21 @@ return function(t)
 		end
 	end)
 
+	t.test("im-select.exe declares `0` as its no-idea sentinel", function()
+		-- Measured over SSH into Windows 11 ARM64: im-select.exe reads the layout
+		-- of the foreground window, an SSH session has none, and it answers "0".
+		-- The plugin's SSH guard does not save us here -- Windows OpenSSH leaves
+		-- $SSH_TTY unset, so auto-detection runs. Locale IDs are open-ended, so no
+		-- allow-list can reject it; `unknown` is precisely the key that says "this
+		-- value means nothing, treat it as English".
+		t.eq(presets.im_select_exe.unknown, "0")
+		t.eq(backend.sanitize(presets.im_select_exe, "0\n"), "1033")
+
+		-- And it has to follow an overridden english, not the preset's default.
+		local b = backend.resolve({ backend = "im_select_exe", english = "1041" }, probe("Windows_NT"))
+		t.eq(backend.sanitize(b, "0\n"), "1041")
+	end)
+
 	t.test("the input-source presets warn about external IMEs", function()
 		-- The price of auto-detecting them. Without this the plugin can silently
 		-- pick a backend that cannot see the difference it exists to enforce.

@@ -63,6 +63,7 @@ function M.arm(o)
 	vim.env.FAKE_IM_LOG = M.log
 	vim.env.FAKE_IM_DELAY_MS = tostring(o.delay or 0)
 	vim.env.FAKE_IM_FAIL = o.fail and "1" or nil
+	vim.env.FAKE_IM_SET_NOISE = o.set_noise or nil
 
 	M.backend = {
 		english = "en",

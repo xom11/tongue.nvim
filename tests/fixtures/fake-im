@@ -30,6 +30,8 @@
 #   FAKE_IM_LOG       file nhat ky lenh                  (tuy chon)
 #   FAKE_IM_DELAY_MS  do tre gia, ap cho CA get lan set  (tuy chon, mac dinh 0)
 #   FAKE_IM_FAIL      khac rong -> thoat 1 va khong lam gi
+#   FAKE_IM_SET_NOISE khac rong -> `set` in chuoi nay ra STDOUT, KHONG doi
+#                     state, va van thoat 0
 #
 # Do tre la thu bat buoc phai gia lap duoc: `tongue` that mat ~40-50 ms, va toan
 # bo may trang thai cua plugin ton tai chi vi do tre do. Test khong dieu khien
@@ -72,5 +74,13 @@ if [ "$#" -eq 0 ]; then
 	printf '%s\n' "$snap"
 else
 	nap
+	if [ -n "${FAKE_IM_SET_NOISE:-}" ]; then
+		# Dung cach macism 3.1.1 hong: bao loi ra STDOUT, KHONG doi state, va
+		# van thoat 0. Do la truong hop kho that -- khong co ma thoat nao de
+		# doc, nen thu duy nhat phan biet duoc thanh cong voi that bai la cai
+		# no in ra.
+		printf '%s\n' "$FAKE_IM_SET_NOISE"
+		exit 0
+	fi
 	printf '%s' "$1" >"$state"
 fi

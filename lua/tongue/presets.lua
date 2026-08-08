@@ -79,6 +79,14 @@ return {
 		english = "1033",
 		get = { "im-select.exe" },
 		set = { "im-select.exe" },
+		-- `im-select.exe` reads the layout of the FOREGROUND WINDOW, and answers
+		-- `0` when there is none. Measured over SSH into Windows 11 ARM64 -- where
+		-- this matters, because Windows OpenSSH leaves $SSH_TTY unset and so the
+		-- plugin's SSH guard never fires. `0` is LOCALE_NEUTRAL and never a real
+		-- layout, and locale IDs are open-ended so no `tokens` list could reject
+		-- it; declaring it as the no-idea sentinel is what stops the plugin
+		-- remembering it as the layout to restore.
+		unknown = "0",
 		note = INPUT_SOURCE_ONLY,
 	},
 

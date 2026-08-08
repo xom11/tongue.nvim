@@ -166,13 +166,33 @@ local function get_async(cb)
 	end)
 end
 
+--- Run `set`, and report whether we can BELIEVE it.
+---
+--- Exit code alone is not enough, and that is measured rather than defensive:
+--- macism 3.1.1 answers a nonexistent input source with `Input source ... does
+--- not exist!` on STDOUT and still exits 0. There is no code to read, so what it
+--- printed is the only evidence that anything went wrong -- and taking exit 0 at
+--- its word leaves the plugin recording a switch that never happened, silently,
+--- for the rest of the session.
+---
+--- A successful `set` has nothing to say: `tongue en` writes to neither stream,
+--- and neither does `fcitx5-remote -s`. Output here means something is wrong.
 local function set_async(token, cb)
 	local argv = vim.list_extend(vim.deepcopy(cfg.set), { token })
 	run(argv, function(out)
 		if out.code ~= 0 then
 			warn("set-failed", ("`%s` %s%s"):format(table.concat(argv, " "), why(out.code), tail(out.stderr)))
+			return cb(false)
 		end
-		cb(out.code)
+		local said = (out.stdout or ""):gsub("^%s+", ""):gsub("%s+$", "")
+		if said ~= "" then
+			if #said > 200 then
+				said = said:sub(1, 200) .. "..."
+			end
+			warn("set-noisy", ("`%s` exited 0 but printed: %s"):format(table.concat(argv, " "), said))
+			return cb(false)
+		end
+		cb(true)
 	end)
 end
 
@@ -255,8 +275,8 @@ cycle = function()
 			return finish(w)
 		end
 
-		set_async(w, function(code)
-			applied = (code == 0) and w or nil
+		set_async(w, function(believed)
+			applied = believed and w or nil
 			finish(w)
 		end)
 	end)
