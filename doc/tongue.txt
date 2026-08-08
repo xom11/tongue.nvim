@@ -79,6 +79,13 @@ is validated against it. The common case needs nothing else: >lua
     -- macism is installed; this machine types on US, not ABC
     require("tongue").setup({ english = "com.apple.keylayout.US" })
 <
+Get `english` right, because macism will not tell you when you get it wrong.
+Measured on macism 3.1.1: an input source that does not exist on this machine
+makes it print "Input source ... does not exist!" on STDOUT and exit 0. Nothing
+separates that from success, so a wrong `english` gives you a plugin that runs,
+reports healthy, and switches nothing. Check first: `macism <id>` then `macism`
+should read it back.
+
 The deadline is enforced by the plugin, not merely passed to |vim.system()|.
 That matters when writing a backend: vim.system's own timeout kills the process
 it started but still waits for the stdout pipe to close, and a shell wrapper
@@ -138,11 +145,19 @@ If `tokens` is given it must contain `english`.
 Presets: `require("tongue.presets")` -- `.tongue`, `.macism`, `.im_select`,
 `.im_select_exe`, `.fcitx5`.
 
-What has been run, and what has not: im-select.exe was driven end to end on
-Windows 11 ARM64 with Neovim 0.12.4 as a hand-written backend. Its
-auto-detection, and macism and im-select, are covered by tests -- every OS chain
-runs through an injected prober in tests/backend_spec.lua -- rather than by the
-binaries themselves. That is the gap, stated rather than hidden.
+What has been run, and what has not:
+
+macism          verified end to end on macOS 26.5.1, Neovim 0.12.4, macism
+                3.1.1, against the real macOS Vietnamese IM. Auto-detected when
+                tongue is absent; outranked by tongue when both are present.
+                Reads cost ~22ms (tongue: ~40-50ms, it moves an IME too).
+im-select.exe   driven end to end on Windows 11 ARM64, Neovim 0.12.4, as a
+                hand-written backend. Its auto-detection has not run on Windows.
+im-select       not run. Same shape as macism; covered as a chain and as data.
+
+Every OS chain, Linux and Windows included, is exercised from a Mac:
+tests/backend_spec.lua drives resolve() through an injected prober rather than
+asking the real machine.
 
 ==============================================================================
 6. HEALTH                                                       *tongue-health*

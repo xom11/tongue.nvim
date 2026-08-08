@@ -122,6 +122,13 @@ require("tongue").setup({ backend = "im-select" })  -- `im_select` works too
 validated against it: `backend = "tongue", english = "com.apple.keylayout.US"` is
 an error rather than a plugin that runs while discarding every reading it takes.
 
+> **Get `english` right, because macism will not tell you when you get it
+> wrong.** Measured on macism 3.1.1: an input source that does not exist on this
+> machine makes it print `Input source … does not exist!` **on stdout** and exit
+> **0**. Nothing distinguishes that from success, so a wrong `english` is a
+> plugin that runs, reports healthy, and switches nothing. Check your value
+> first: `macism <your-id>` followed by `macism` should read it back.
+
 ### Custom backends
 
 A backend is four keys, plus an optional note. Anything that satisfies them
@@ -150,14 +157,24 @@ forever.
 Presets are available as `require("tongue.presets").tongue`, `.macism`,
 `.im_select`, `.im_select_exe` and `.fcitx5`.
 
-**What has actually been run.** `im-select.exe` on Windows 11 ARM64 with Neovim
-0.12.4 has been driven end to end as a hand-written backend: startup records the
-live layout and forces English, Insert restores it, leaving forces English again.
-Its *auto-detection* is new here and covered by tests rather than by a Windows
-machine — `tests/backend_spec.lua` drives every OS chain through an injected
-prober, so the Linux and Windows branches are exercised from a Mac. `macism` and
-`im-select` are likewise verified as chains and as data, not by running the
-binaries. If one of them misbehaves in practice, that is the gap.
+**What has actually been run.**
+
+- **macism** — verified end to end on macOS 26.5.1 with Neovim 0.12.4 and macism
+  3.1.1, driving the real macOS Vietnamese IM (`com.apple.inputmethod.VietnameseIM.VietnameseTelex`):
+  auto-detection picks it when `tongue` is absent, startup records the live
+  source and forces `ABC`, Insert restores Vietnamese, leaving forces `ABC`, and
+  a switch made by hand mid-Insert is the one that comes back. Reads cost ~22 ms,
+  against ~40–50 ms for `tongue`, which also has an IME process to move.
+  With `tongue` installed as well, `tongue` still wins — as intended.
+- **im-select.exe** — driven end to end on Windows 11 ARM64 with Neovim 0.12.4 as
+  a hand-written backend. Its *auto-detection* is new here and has not run on a
+  Windows machine.
+- **im-select** (macOS) — not run. Same shape as macism, and covered as a chain
+  and as data, but the binary itself is untested here.
+
+Every OS chain, Linux and Windows included, is exercised from a Mac:
+`tests/backend_spec.lua` drives `resolve()` through an injected prober rather
+than asking the real machine.
 
 ## `:checkhealth tongue`
 
