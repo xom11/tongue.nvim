@@ -66,11 +66,18 @@ require("tongue").setup({
   -- Warn when the backend fails, times out, or answers with something
   -- unusable. Throttled to one message per 30 s per kind.
   notify = true,
-  -- Per-command timeout, milliseconds. A hung backend must not wedge the
+  -- Per-command deadline, milliseconds. A hung backend must not wedge the
   -- plugin for the rest of the session.
   timeout = 2000,
 })
 ```
+
+The deadline is enforced by the plugin itself, not just handed to `vim.system`.
+That distinction matters if you write your own backend: `vim.system`'s `timeout`
+kills the process it started but still waits for the stdout pipe to close, and a
+shell wrapper that runs its work in a subprocess leaves a grandchild holding
+that pipe open. Measured: a wrapper forking `sleep 5` with `timeout = 200` called
+back after 5016 ms; the same script using `exec` came back at 202 ms.
 
 `notify = false` silences *runtime* warnings. A malformed `backend` is always
 reported — that is a config bug, and a plugin whose whole job is to stop you

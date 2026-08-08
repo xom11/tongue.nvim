@@ -55,9 +55,16 @@ it with `cargo install tongue`; use the repository above.
     require("tongue").setup({
       backend = nil,    -- override auto-detection, see |tongue-backends|
       notify  = true,   -- warn on backend failure (throttled, 30s per kind)
-      timeout = 2000,   -- per-command timeout in milliseconds
+      timeout = 2000,   -- per-command deadline in milliseconds
     })
 <
+The deadline is enforced by the plugin, not merely passed to |vim.system()|.
+That matters when writing a backend: vim.system's own timeout kills the process
+it started but still waits for the stdout pipe to close, and a shell wrapper
+running its work in a subprocess leaves a grandchild holding that pipe. Measured:
+a wrapper forking `sleep 5` with timeout=200 called back after 5016ms; the same
+script using `exec` came back at 202ms.
+
 setup() is required. Nothing happens on `require` alone.
 
 With no supported backend, and in SSH sessions, the plugin stays inert. That
