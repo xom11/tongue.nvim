@@ -122,12 +122,12 @@ require("tongue").setup({ backend = "im-select" })  -- `im_select` works too
 validated against it: `backend = "tongue", english = "com.apple.keylayout.US"` is
 an error rather than a plugin that runs while discarding every reading it takes.
 
-> **Get `english` right, because macism will not tell you when you get it
-> wrong.** Measured on macism 3.1.1: an input source that does not exist on this
-> machine makes it print `Input source … does not exist!` **on stdout** and exit
-> **0**. Nothing distinguishes that from success, so a wrong `english` is a
-> plugin that runs, reports healthy, and switches nothing. Check your value
-> first: `macism <your-id>` followed by `macism` should read it back.
+> **Get `english` right.** Measured on macism 3.1.1: an input source that does
+> not exist on this machine makes it print `Input source … does not exist!` **on
+> stdout** and exit **0** — a failure with no exit code to read. The plugin
+> catches this (a `set` that prints anything is treated as failed, and warns),
+> but `:checkhealth` cannot: it only ever *reads*. So verify your value by hand
+> once — `macism <your-id>` then `macism` should read it back.
 
 ### Custom backends
 
@@ -153,6 +153,12 @@ interior whitespace is rejected rather than cleaned up, deliberately: readers
 that merge stderr into stdout turn a stray warning into a single
 plausible-looking token, which then gets stored and replayed as an argument
 forever.
+
+`set` must be **silent** on success. Anything it writes to stdout is treated as a
+failure and warned about, whatever the exit code says — `tongue en` and
+`fcitx5-remote -s` both print nothing, and macism 3.1.1 reports a nonexistent
+input source exactly that way while still exiting 0. A backend with no exit code
+worth reading leaves its output as the only evidence there is.
 
 Presets are available as `require("tongue.presets").tongue`, `.macism`,
 `.im_select`, `.im_select_exe` and `.fcitx5`.
@@ -194,12 +200,12 @@ which.
   the mode string cannot tell them apart.
 - **The SSH guard does not fire on Windows.** It keys off `$SSH_TTY`, and Windows
   OpenSSH does not set it (measured on Windows 11 ARM64). So a Neovim run over
-  SSH into Windows *does* auto-detect `im-select.exe` — and `im-select.exe` needs
-  a foreground window, which an SSH session has none of, so it answers `0`. The
-  plugin has no allow-list for locale IDs (they are open-ended) and so accepts
-  `0` and remembers it as the layout to restore. Nothing is damaged and nothing
-  useful happens. Editing over SSH into Windows is the one case where this plugin
-  is better left out of your config.
+  SSH into Windows *does* auto-detect `im-select.exe` — and `im-select.exe` reads
+  the foreground window's layout, which an SSH session has none of, so it answers
+  `0`. The preset declares `0` as its no-idea sentinel, so that is read as English
+  rather than remembered as a layout; the plugin then settles and does nothing
+  further. Verified on that machine. It is inert in effect, just not by the route
+  it takes on every other OS.
 - Switching takes as long as your backend takes (~200 ms for `tongue`, because
   it starts and stops an IME process). There is a window after leaving Insert
   where the switch has not landed yet. Nothing in an editor plugin can close it.
