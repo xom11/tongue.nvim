@@ -62,7 +62,7 @@ function t.ok(cond, what)
 	end
 end
 
-for _, spec in ipairs({ "mode", "sanitize", "state", "health", "wiring" }) do
+for _, spec in ipairs({ "mode", "sanitize", "fixture", "state", "health", "wiring" }) do
 	io.write(spec .. "\n")
 	require(spec .. "_spec")(t)
 end
