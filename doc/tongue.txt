@@ -38,14 +38,23 @@ Two design properties are load-bearing:
 Neovim 0.10 or newer -- |vim.system()| is the only command runner that both
 separates stderr from stdout and supports a timeout, and both matter here.
 
-A backend on $PATH:
+A backend on $PATH. Auto-detection takes the first one it finds, in order:
 
     macOS     tongue          https://github.com/xom11/tongue
+              macism          https://github.com/laishulu/macism
+              im-select       https://github.com/daehahn/im-select
     Linux     fcitx5-remote   (ships with fcitx5)
+    Windows   im-select.exe
     other     supply your own, see |tongue-backends|
 
 Note: the `tongue` crate on crates.io is an unrelated program. Do not install
 it with `cargo install tongue`; use the repository above.
+
+`tongue` comes first on macOS deliberately. macism and im-select read and write
+input-source IDs, which is the weaker lever: with an external IME, "vi" and "en"
+are the SAME input source and they cannot tell them apart. They are still worth
+detecting -- macOS's own Vietnamese, Japanese and Chinese input sources are
+served fine by them -- and |tongue-health| says so out loud when you land on one.
 
 ==============================================================================
 3. SETUP                                                         *tongue-setup*
@@ -53,10 +62,22 @@ it with `cargo install tongue`; use the repository above.
                                                              *tongue.setup()*
 >lua
     require("tongue").setup({
-      backend = nil,    -- override auto-detection, see |tongue-backends|
+      backend = nil,    -- preset name or table, see |tongue-backends|
+      english = nil,    -- override the resolved backend's English token
       notify  = true,   -- warn on backend failure (throttled, 30s per kind)
       timeout = 2000,   -- per-command deadline in milliseconds
     })
+<
+`backend` accepts a preset name as well as a table: >lua
+
+    require("tongue").setup({ backend = "macism" })
+    require("tongue").setup({ backend = "im-select" })  -- `im_select` too
+<
+`english` applies to whatever backend was resolved, auto-detected included, and
+is validated against it. The common case needs nothing else: >lua
+
+    -- macism is installed; this machine types on US, not ABC
+    require("tongue").setup({ english = "com.apple.keylayout.US" })
 <
 The deadline is enforced by the plugin, not merely passed to |vim.system()|.
 That matters when writing a backend: vim.system's own timeout kills the process
@@ -71,9 +92,10 @@ With no supported backend, and in SSH sessions, the plugin stays inert. That
 is deliberate, not a failure: over SSH the input method that matters is the
 client's.
 
-`notify = false` silences runtime warnings only. A malformed `backend` is
-always reported, because a config bug that silently disables the plugin is the
-exact failure this plugin exists to prevent.
+`notify = false` silences runtime warnings only. A malformed `backend` or
+`english` is always reported, because a config bug that silently disables the
+plugin is the exact failure this plugin exists to prevent. Being inert is not a
+config bug and stays silent.
 
                                                             *tongue.status()*
 Returns a table describing the resolved backend and current state. Used by
@@ -103,6 +125,7 @@ A backend is a table: >lua
       set     = { "im-select.exe" },  -- argv, token appended        (required)
       unknown = nil,                  -- token meaning "unrecognised"
       tokens  = nil,                  -- allow-list, nil = any single word
+      note    = nil,                  -- shown by |tongue-health|, no effect
     }
 <
 `get` must print exactly one whitespace-free token. Output with interior
@@ -112,11 +135,14 @@ gets stored and replayed as an argument forever.
 
 If `tokens` is given it must contain `english`.
 
-Presets: `require("tongue.presets").tongue` and `.fcitx5`.
+Presets: `require("tongue.presets")` -- `.tongue`, `.macism`, `.im_select`,
+`.im_select_exe`, `.fcitx5`.
 
-Windows is not auto-detected. An `im-select.exe` branch existed and was
-removed before release because it had never been run; the table above is the
-supported way to use one.
+What has been run, and what has not: im-select.exe was driven end to end on
+Windows 11 ARM64 with Neovim 0.12.4 as a hand-written backend. Its
+auto-detection, and macism and im-select, are covered by tests -- every OS chain
+runs through an injected prober in tests/backend_spec.lua -- rather than by the
+binaries themselves. That is the gap, stated rather than hidden.
 
 ==============================================================================
 6. HEALTH                                                       *tongue-health*
@@ -127,6 +153,11 @@ supported way to use one.
 Reports which backend was resolved and why, runs one real read, and flags a
 backend that writes to stderr on success or answers with something outside its
 declared token set -- which is what a name collision looks like from here.
+
+It also prints the resolved backend's `note` if it has one. That is where you
+find out that macism or im-select cannot see an external IME: the plugin looks
+identical from the outside whether it is enforcing English or merely reselecting
+an input source that was never what made you type Vietnamese.
 
 ==============================================================================
 7. LIMITATIONS                                             *tongue-limitations*

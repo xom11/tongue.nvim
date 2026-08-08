@@ -17,10 +17,26 @@ It also never blocks the UI, and it handles `<C-c>` — which fires no
 ## Requirements
 
 - Neovim **0.10+** (`vim.system`)
-- a backend on `$PATH`:
-  - macOS — [`tongue`](https://github.com/xom11/tongue)
-  - Linux — `fcitx5-remote` (ships with fcitx5)
-  - anything else — bring your own, see [Custom backends](#custom-backends)
+- a backend on `$PATH`. Auto-detection takes the first one it finds, in this
+  order:
+
+  | OS | order | preset |
+  |---|---|---|
+  | macOS | [`tongue`](https://github.com/xom11/tongue) | `tongue` |
+  | | [`macism`](https://github.com/laishulu/macism) | `macism` |
+  | | [`im-select`](https://github.com/daehahn/im-select) | `im_select` |
+  | Linux | `fcitx5-remote` (ships with fcitx5) | `fcitx5` |
+  | Windows | `im-select.exe` | `im_select_exe` |
+
+  Anything else — bring your own, see [Custom backends](#custom-backends).
+
+`tongue` is first on macOS on purpose. `macism` and `im-select` read and write
+**input-source IDs**, which is the weaker lever: with an external IME, `vi` and
+`en` are the *same* input source, so they cannot tell them apart. They are still
+worth detecting — a machine using macOS's own Vietnamese, Japanese or Chinese
+input sources is served perfectly well by them — but `:checkhealth` says so out
+loud when you land on one, because the plugin looks identical from the outside
+either way.
 
 > **Do not run `cargo install tongue`.** The `tongue` crate on crates.io is an
 > unrelated program (a shell) that happens to install a binary of the same name.
@@ -61,8 +77,11 @@ burst cost one process, not 60.
 
 ```lua
 require("tongue").setup({
-  -- Override auto-detection. See "Custom backends".
+  -- Override auto-detection: a preset name, or a table. See "Custom backends".
   backend = nil,
+  -- The token to force in Normal mode. Overrides whatever the resolved backend
+  -- brought with it — including an auto-detected one.
+  english = nil,
   -- Warn when the backend fails, times out, or answers with something
   -- unusable. Throttled to one message per 30 s per kind.
   notify = true,
@@ -79,14 +98,35 @@ shell wrapper that runs its work in a subprocess leaves a grandchild holding
 that pipe open. Measured: a wrapper forking `sleep 5` with `timeout = 200` called
 back after 5016 ms; the same script using `exec` came back at 202 ms.
 
-`notify = false` silences *runtime* warnings. A malformed `backend` is always
-reported — that is a config bug, and a plugin whose whole job is to stop you
-typing in the wrong language has no business failing quietly.
+`notify = false` silences *runtime* warnings. A malformed `backend` or `english`
+is always reported — that is a config bug, and a plugin whose whole job is to
+stop you typing in the wrong language has no business failing quietly. Being
+*inert* stays silent, because that is not a bug: no IME tool on this machine, and
+SSH, are correct outcomes.
+
+### Picking a backend by name
+
+The common case is not writing a backend — it is having one of them already and
+disagreeing with one value:
+
+```lua
+-- I have macism, and this machine types on US rather than ABC.
+require("tongue").setup({ english = "com.apple.keylayout.US" })
+
+-- Skip detection entirely and name the preset.
+require("tongue").setup({ backend = "macism" })
+require("tongue").setup({ backend = "im-select" })  -- `im_select` works too
+```
+
+`english` applies to whatever backend was resolved, auto-detected or not, and is
+validated against it: `backend = "tongue", english = "com.apple.keylayout.US"` is
+an error rather than a plugin that runs while discarding every reading it takes.
 
 ### Custom backends
 
-A backend is four keys. Anything that satisfies them works, and the built-in
-presets are nothing more than tables of exactly this shape:
+A backend is four keys, plus an optional note. Anything that satisfies them
+works, and the built-in presets are nothing more than tables of exactly this
+shape:
 
 ```lua
 require("tongue").setup({
@@ -96,6 +136,7 @@ require("tongue").setup({
     set     = { "im-select.exe" }, -- argv; the token is appended    (required)
     unknown = nil,                 -- token meaning "no idea" -> treated as english
     tokens  = nil,                 -- allow-list; nil means anything one-word
+    note    = nil,                 -- printed by :checkhealth; no other effect
   },
 })
 ```
@@ -106,16 +147,17 @@ that merge stderr into stdout turn a stray warning into a single
 plausible-looking token, which then gets stored and replayed as an argument
 forever.
 
-Presets are available as `require("tongue.presets").tongue` and `.fcitx5`.
+Presets are available as `require("tongue.presets").tongue`, `.macism`,
+`.im_select`, `.im_select_exe` and `.fcitx5`.
 
-Windows is not detected automatically. There was an `im-select.exe` branch and
-it was removed before release because it had never actually been run — the
-config above is the supported way to use one, and it is verified: on Windows 11
-ARM64 with Neovim 0.12.4, a hand-written backend drives the full cycle
-(startup records the live layout and forces English, Insert restores it, leaving
-forces English again). With no backend configured the plugin reports
-`inactive: no supported input-method tool found on Windows_NT` and does nothing
-at all — 1.4 ms of a 233 ms startup.
+**What has actually been run.** `im-select.exe` on Windows 11 ARM64 with Neovim
+0.12.4 has been driven end to end as a hand-written backend: startup records the
+live layout and forces English, Insert restores it, leaving forces English again.
+Its *auto-detection* is new here and covered by tests rather than by a Windows
+machine — `tests/backend_spec.lua` drives every OS chain through an injected
+prober, so the Linux and Windows branches are exercised from a Mac. `macism` and
+`im-select` are likewise verified as chains and as data, not by running the
+binaries. If one of them misbehaves in practice, that is the gap.
 
 ## `:checkhealth tongue`
 

@@ -106,6 +106,34 @@ return function(t)
 		t.ok(find(seen, "ok", "reads back") ~= nil, "and the value it read")
 	end)
 
+	t.test("a backend that carries a note has it read out", function()
+		-- The price of auto-detecting macism and im-select. They cannot see an
+		-- external IME at all, so a machine that lands on one is running a plugin
+		-- that looks healthy and enforces nothing. `:checkhealth` is the only
+		-- place that can say so, and a note nobody prints is a note nobody reads.
+		h.arm({ machine = "vi" })
+		h.settle()
+		local carrier = vim.deepcopy(h.backend)
+		carrier.note = "MOVES ONLY ONE LEVER"
+		require("tongue").setup({ backend = carrier, notify = false })
+		h.settle()
+
+		local ok, err, seen = check()
+		t.ok(ok, "must not throw: " .. tostring(err))
+		t.ok(find(seen, "warn", "MOVES ONLY ONE LEVER") ~= nil, "the note must be surfaced as a warning")
+	end)
+
+	t.test("a backend with nothing to warn about warns about nothing", function()
+		-- The counterweight to the test above: a note printed unconditionally, or
+		-- printed for `tongue`, would train the user to ignore the one case where
+		-- it matters.
+		h.arm({ machine = "vi" })
+		h.settle()
+		local ok, err, seen = check()
+		t.ok(ok, "must not throw: " .. tostring(err))
+		t.eq(find(seen, "warn", "lever"), nil, "no note, no warning")
+	end)
+
 	t.test("an inactive plugin is information, not an error", function()
 		-- No backend on this machine, and SSH, are correct outcomes.
 		require("tongue").setup({ backend = nil, notify = false })

@@ -47,6 +47,14 @@ function H.check()
 	health.ok(("active via %s"):format(st.reason))
 
 	local cfg = st.backend
+
+	-- A backend can be working perfectly and still be the wrong lever. This is
+	-- the only place that can say so: the plugin looks identical from the outside
+	-- whether it is enforcing English or merely re-selecting an input source that
+	-- was never the thing making you type Vietnamese.
+	if cfg.note then
+		health.warn(cfg.note)
+	end
 	local exe = cfg.get[1]
 	local path = vim.fn.exepath(exe)
 	if path == "" then

@@ -294,4 +294,38 @@ return function(t)
 		t.eq(s.enabled, false)
 		t.eq(s.reason, "backend.get must be a non-empty list of strings")
 	end)
+
+	t.test("a config bug in `english` alone is still announced", function()
+		-- `backend` used to be the only knob that could produce a config error, so
+		-- the error path only ever checked that one. `english` can too, and a
+		-- typo there would otherwise leave the plugin inert without a word --
+		-- which is the exact failure this plugin exists to refuse to commit.
+		--
+		-- `notify = false` deliberately does NOT silence this: it silences runtime
+		-- warnings about a flaky backend, not a broken config.
+		local real = vim.notify
+		local seen = {}
+		vim.notify = function(msg, level)
+			seen[#seen + 1] = { msg = msg, level = level }
+		end
+		-- Drain what an earlier test already scheduled. Notifications are deferred,
+		-- so the previous case's error lands in THIS stub otherwise -- and the test
+		-- passes on somebody else's message.
+		vim.wait(100)
+		seen = {}
+		local ok, err = pcall(function()
+			require("tongue").setup({ english = 42, notify = false })
+			-- The notification is scheduled, so the loop has to turn.
+			vim.wait(500, function()
+				return #seen > 0
+			end)
+		end)
+		vim.notify = real
+		t.ok(ok, "setup must not throw: " .. tostring(err))
+
+		t.eq(st().enabled, false)
+		t.ok(seen[1] ~= nil, "a malformed `english` must be reported")
+		t.eq(seen[1].level, vim.log.levels.ERROR)
+		t.ok(seen[1].msg:find("english", 1, true) ~= nil, "and it must say what is wrong: " .. tostring(seen[1].msg))
+	end)
 end

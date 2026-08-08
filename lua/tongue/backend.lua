@@ -45,6 +45,12 @@ function M.validate(b)
 	if b.unknown ~= nil and type(b.unknown) ~= "string" then
 		return nil, "backend.unknown must be a string or nil"
 	end
+	-- Carries no control meaning -- `health` prints it and nothing else reads it
+	-- -- but a number reaching `vim.health` throws out of the very check the user
+	-- ran to diagnose something.
+	if b.note ~= nil and type(b.note) ~= "string" then
+		return nil, "backend.note must be a string or nil"
+	end
 	if b.tokens ~= nil then
 		if not is_string_list(b.tokens) then
 			return nil, "backend.tokens must be a non-empty list of strings, or nil"
@@ -59,24 +65,67 @@ function M.validate(b)
 	return b
 end
 
---- Pick a backend for this machine.
+--- What to look for, in priority order, per `uname` sysname.
 ---
---- Returns `backend, reason` when one is found, or `nil, reason` when the plugin
---- should stay inert. `reason` is for `:checkhealth`, not for control flow.
----@param opts table?
----@return table?, string
-function M.resolve(opts)
-	opts = opts or {}
+--- `{ binary to probe for, preset key }`. This is data rather than a chain of
+--- `if`s so that supporting one more tool is one line here plus one table in
+--- `presets` -- no new branch, and nothing to keep in sync.
+---
+--- The ORDER is a promise, not an accident. `tongue` moves both levers (layout
+--- and IME process); `macism` and `im-select` move one. A machine that has
+--- `tongue` must keep choosing it, or adding these would quietly weaken the
+--- exact guarantee the plugin exists for.
+local CANDIDATES = {
+	Darwin = {
+		{ "tongue", "tongue" },
+		{ "macism", "macism" },
+		{ "im-select", "im_select" },
+	},
+	Linux = {
+		{ "fcitx5-remote", "fcitx5" },
+	},
+	Windows_NT = {
+		{ "im-select.exe", "im_select_exe" },
+	},
+}
 
+--- Look a preset up by name, tolerating the punctuation of the binary.
+---
+--- Preset keys are Lua identifiers so that `presets.im_select` reads like
+--- `presets.tongue`, but nobody types Lua identifiers into their config -- they
+--- type the name of the program they installed. One rule, not a table of
+--- aliases: everything that is not alphanumeric becomes `_`.
+---@param name string
+---@return table?, string?
+local function by_name(name)
+	-- `gsub` returns TWO values; unparenthesised it would index `presets` with
+	-- the name and then pass the match count along as a second argument.
+	local b = presets[name] or presets[(name:gsub("[^%w]", "_"))]
+	if b then
+		return b
+	end
+	local known = vim.tbl_keys(presets)
+	table.sort(known)
+	return nil, ("unknown backend preset %q (known: %s)"):format(name, table.concat(known, ", "))
+end
+
+--- Which backend, before any `english` override. See `M.resolve`.
+---@return table?, string, boolean?
+local function pick(opts, probe)
 	-- An explicitly configured backend wins outright, including over SSH: the
 	-- user said so, and second-guessing an explicit setting is how config stops
 	-- being predictable.
-	if opts.backend ~= nil then
-		local b, err = M.validate(opts.backend)
+	if type(opts.backend) == "string" then
+		-- Detection is skipped entirely rather than used as a fallback. A typo
+		-- that silently resolves to some other backend is worse than an error.
+		local b, err = by_name(opts.backend)
 		if not b then
-			return nil, err
+			return nil, err, true
 		end
-		return b, "explicit"
+		return b, "explicit: " .. opts.backend
+	end
+	if opts.backend ~= nil then
+		return opts.backend, "explicit" -- shape is checked by `M.resolve`
 	end
 
 	-- Auto-detection stops here in an SSH session. The input method that matters
@@ -87,17 +136,76 @@ function M.resolve(opts)
 		return nil, "SSH session (auto-detection skipped; set `backend` explicitly to override)"
 	end
 
-	local uv = vim.uv or vim.loop
-	local sysname = uv.os_uname().sysname
-
-	if sysname == "Darwin" and vim.fn.executable("tongue") == 1 then
-		return presets.tongue, "tongue"
+	local sysname = probe.sysname or (vim.uv or vim.loop).os_uname().sysname
+	local executable = probe.executable or function(name)
+		return vim.fn.executable(name) == 1
 	end
-	if sysname == "Linux" and vim.fn.executable("fcitx5-remote") == 1 then
-		return presets.fcitx5, "fcitx5-remote"
+
+	for _, c in ipairs(CANDIDATES[sysname] or {}) do
+		if executable(c[1]) then
+			return presets[c[2]], c[1]
+		end
 	end
 
 	return nil, ("no supported input-method tool found on %s"):format(sysname)
+end
+
+--- Pick a backend for this machine.
+---
+--- Returns `backend, reason` when one is found, or `nil, reason` when the plugin
+--- should stay inert. `reason` is for `:checkhealth`, not for control flow.
+---
+--- `probe` exists so this is testable at all. Left to ask the real OS, the only
+--- chain that could ever be exercised is the one belonging to whatever machine
+--- the suite runs on -- and a Windows branch nobody can run is precisely how the
+--- last one shipped broken. It is `init.lua`'s discipline (know nothing about
+--- the machine, take it as an argument) applied one level down.
+---
+--- The third return value separates the two ways this can fail. Inert is a
+--- legitimate outcome -- no IME tool on this machine, or an SSH session -- and
+--- must stay quiet. A config bug is not, and staying quiet about one is how it
+--- survives for months. `init.lua` needs to tell them apart and cannot do it by
+--- reading `opts`: whether `english` is wrong depends on which backend received
+--- it.
+---@param opts table?
+---@param probe table? `{ sysname: string, executable: fun(name):boolean }`, partial
+---@return table?, string, boolean? `true` when the reason is a config bug
+function M.resolve(opts, probe)
+	opts = opts or {}
+
+	-- Shape of the config first, before the machine is consulted at all. A
+	-- malformed `english` is wrong on every machine, including one with no
+	-- backend and including SSH -- and if this ran later, "no supported tool
+	-- found" would outrank it and the user would hear about their package list
+	-- instead of their typo.
+	if opts.english ~= nil and (type(opts.english) ~= "string" or opts.english == "") then
+		return nil, "english must be a non-empty string", true
+	end
+
+	local b, why, fatal = pick(opts, probe or {})
+	if not b then
+		return nil, why, fatal
+	end
+
+	if opts.english ~= nil then
+		-- COPY. Overriding in place would scribble on the shared preset table for
+		-- the rest of the session: a second `setup()` -- which `:Lazy reload` and
+		-- every config reload does -- would silently inherit the first one's
+		-- override.
+		b = vim.deepcopy(b)
+		b.english = opts.english
+	end
+
+	-- After the override, and on every path including the built-in presets.
+	-- Presets used to be trusted unconditionally; they are data, and data gets
+	-- edited. This is also what turns `backend = "tongue", english = "<an
+	-- input-source ID>"` into a loud error instead of a plugin that runs while
+	-- `sanitize` discards every reading it ever takes.
+	local ok, err = M.validate(b)
+	if not ok then
+		return nil, err, true
+	end
+	return b, why
 end
 
 --- Turn raw backend stdout into a token, or `nil, reason`.

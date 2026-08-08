@@ -361,14 +361,18 @@ function M.setup(opts)
 	notify = opts.notify ~= false
 	timeout_ms = tonumber(opts.timeout) or 2000
 
-	local backend, why = require("tongue.backend").resolve(opts)
+	local backend, why, fatal = require("tongue.backend").resolve(opts)
 	cfg, reason = backend, why
 
 	if not cfg then
 		-- Inert is a legitimate outcome (SSH, a machine with no IME tool), so it
-		-- is not a warning. A *malformed* backend is, though -- that is a config
-		-- bug and silence would hide it.
-		if opts.backend ~= nil then
+		-- is not a warning. A *malformed* config is, though -- that is a bug and
+		-- silence would hide it.
+		--
+		-- `resolve` makes the call, not this line. Deciding here means guessing
+		-- from `opts` alone, and `opts` cannot tell you whether an `english` is
+		-- wrong -- that depends on which backend ended up receiving it.
+		if fatal then
 			vim.schedule(function()
 				vim.notify("tongue.nvim: " .. why, vim.log.levels.ERROR)
 			end)
