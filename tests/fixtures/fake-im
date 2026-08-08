@@ -1,0 +1,55 @@
+#!/bin/sh
+#
+# Backend gia dung cho test. Tuan thu dung hop dong ma plugin doi hoi:
+#
+#     fake-im            -> in token hien tai ra stdout
+#     fake-im <token>    -> dat token
+#
+# Khac backend that o cho no quan sat duoc: moi lan goi deu duoc ghi vao
+# $FAKE_IM_LOG, mot dong moi lan, nen test khang dinh duoc CA thu tu lenh chu
+# khong chi trang thai cuoi. "Dung trang thai cuoi" khong du -- phan de vo nhat
+# cua plugin nay la thu tu va so luong lenh phat ra, khong phai ket qua.
+#
+# Bien moi truong:
+#   FAKE_IM_STATE     file giu token hien tai            (bat buoc)
+#   FAKE_IM_LOG       file nhat ky lenh                  (tuy chon)
+#   FAKE_IM_DELAY_MS  do tre gia, ap cho CA get lan set  (tuy chon, mac dinh 0)
+#   FAKE_IM_FAIL      khac rong -> thoat 1 va khong lam gi
+#
+# Do tre la thu bat buoc phai gia lap duoc: `tongue` that mat ~53ms, va toan bo
+# may trang thai cua plugin ton tai chi vi do tre do. Test khong dieu khien duoc
+# do tre thi khong test duoc phan dang test.
+
+set -u
+
+state="${FAKE_IM_STATE:?FAKE_IM_STATE chua dat}"
+log="${FAKE_IM_LOG:-}"
+delay_ms="${FAKE_IM_DELAY_MS:-0}"
+
+if [ -n "$log" ]; then
+	if [ "$#" -eq 0 ]; then
+		echo "get" >>"$log"
+	else
+		echo "set $1" >>"$log"
+	fi
+fi
+
+if [ "${FAKE_IM_FAIL:-}" != "" ]; then
+	echo "fake-im: hong theo yeu cau" >&2
+	exit 1
+fi
+
+# `sleep` phan so: BSD (macOS) va GNU (Linux) deu nhan, du cho POSIX khong bat buoc.
+if [ "$delay_ms" -gt 0 ] 2>/dev/null; then
+	sleep "$(awk -v ms="$delay_ms" 'BEGIN { printf "%.3f", ms / 1000 }')"
+fi
+
+if [ "$#" -eq 0 ]; then
+	if [ -r "$state" ]; then
+		cat "$state"
+	else
+		echo ""
+	fi
+else
+	printf '%s' "$1" >"$state"
+fi
