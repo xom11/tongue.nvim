@@ -50,8 +50,16 @@ return function(t)
 		-- pipe to close, and a forked grandchild holds it open. If this fixture
 		-- ever `exec`s instead, the timeout test in state_spec stops proving that
 		-- the plugin's own deadline works, because vim.system's would suffice.
-		local src = table.concat(vim.fn.readfile(h.fake_im), "\n")
-		t.ok(src:find("\n\t\tsleep ") ~= nil, "the sleep must be a separate process, not exec'd")
-		t.eq(src:find("exec sleep"), nil, "exec would make the grandchild disappear")
+		-- Comments only, stripped: the file explains the exec/fork distinction in
+		-- prose, so grepping the whole thing finds the word it is warning about.
+		local code = {}
+		for _, line in ipairs(vim.fn.readfile(h.fake_im)) do
+			if not line:match("^%s*#") then
+				code[#code + 1] = line
+			end
+		end
+		local src = table.concat(code, "\n")
+		t.ok(src:find("sleep ") ~= nil, "the fixture must actually sleep")
+		t.eq(src:find("exec%s+sleep"), nil, "exec would make the grandchild disappear")
 	end)
 end
