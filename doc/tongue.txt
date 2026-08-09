@@ -50,7 +50,7 @@ A backend on $PATH. Auto-detection takes the first one it finds, in order:
 
     macOS     tongue          https://github.com/xom11/tongue
               macism          https://github.com/laishulu/macism
-              im-select       https://github.com/daehahn/im-select
+              im-select       https://github.com/daipeihust/im-select
     Linux     fcitx5-remote   (ships with fcitx5)
               ibus            (ships with ibus -- the GNOME default)
               xkb-switch      https://github.com/grwlf/xkb-switch
@@ -287,7 +287,13 @@ If `tokens` is given it must contain `english`.
 Presets: `require("tongue.presets")` -- `.tongue`, `.macism`, `.im_select`,
 `.im_select_exe`, `.fcitx5`, `.ibus`, `.xkb_switch`.
 
-What has been run, and what has not:
+What has been run: every one of the seven backends, against its real binary.
+
+tongue          verified end to end on macOS 26.5.1 arm64, Neovim 0.12.4,
+                through auto-detection rather than an explicit `backend`. The
+                contract is exact: `tongue` prints the mode and exits 0,
+                `tongue <mode>` is silent and exits 0, an unknown mode exits 2
+                with a message on stderr.
 
 macism          verified end to end on macOS 26.5.1, Neovim 0.12.4, macism
                 3.1.1, against the real macOS Vietnamese IM. Picked when
@@ -301,7 +307,13 @@ im-select.exe   driven end to end on Windows 11 ARM64, Neovim 0.12.4, as a
                 backend) run on a real Windows runner in CI; the rest of the
                 suite cannot, because tests/fixtures/fake-im is a POSIX shell
                 script. That is the harness, not the plugin.
-im-select       NOT run against the binary. Same shape as macism.
+im-select       driven end to end on macOS 26.5.1 arm64, Neovim 0.12.4,
+                im-select 1.0.1, against the real macOS Vietnamese input
+                method. `im-select` prints the source and exits 0; `im-select
+                <id>` is silent and exits 0 for a real source and EXITS 1 for
+                one that does not exist -- the only input-source backend that
+                reports a bad token at all. On the same machine with `tongue`
+                installed too, auto-detection still picks `tongue`.
 fcitx5          driven end to end on Ubuntu 26.04 arm64, Neovim 0.11.6, fcitx5
                 5.1.19 + fcitx5-unikey, in a headless sway 1.11 session. Fits
                 the contract -- but `-s` exits 0 in SILENCE for a name not in

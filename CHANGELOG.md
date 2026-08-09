@@ -5,6 +5,53 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] — 2026-08-09
+
+The last backend that had never been run is now run. Nothing in the plugin's
+behaviour changed.
+
+### Fixed
+
+- **The `im-select` link was dead.** README, `:help`, `presets.lua` and the design
+  spec all pointed at `github.com/daehahn/im-select`, which returns 404 and
+  always has. The tool is
+  [`daipeihust/im-select`](https://github.com/daipeihust/im-select). Anyone who
+  followed the link to install the backend this plugin auto-detects found nothing
+  there.
+
+### Changed
+
+- **im-select verified end to end** on macOS 26.5.1 arm64, Neovim 0.12.4,
+  im-select 1.0.1, against the real macOS Vietnamese input method
+  (`com.apple.inputmethod.VietnameseIM.VietnameseTelex`). Startup records the
+  live source and forces `ABC`, a switch made by hand is remembered, Insert
+  restores it, leaving forces `ABC`. Zero warnings; the fast path stays engaged.
+
+  Its contract is the cleanest of the input-source backends: `im-select` prints
+  one token and exits 0, `im-select <id>` is silent and exits 0 for a real
+  source, and **exits 1 for one that does not exist** — the only one of them that
+  reports a bad token at all. (macism exits 0 and prints to stdout; fcitx5 exits
+  0 in silence.)
+
+  `:checkhealth tongue`'s `set` probe was confirmed against it in both
+  directions: `` ok `set` works: "…VietnameseTelex" -> "com.apple.keylayout.ABC" ``
+  with a correct `english`, and ``error `im-select …NoSuchThing` did not take``
+  with a wrong one.
+
+  On the same machine with `tongue` also installed, auto-detection still resolves
+  `tongue` — the ordering promise, checked on a machine that actually has both
+  rather than through an injected prober.
+
+- **`tongue` itself verified end to end** on the same machine, through
+  auto-detection rather than an explicit `backend`: it resolves `tongue`, startup
+  forces `en`, a hand switch to `vi` is remembered, Insert restores it, leaving
+  forces `en`. Its contract is exact — `tongue` prints the mode and exits 0,
+  `tongue <mode>` is silent and exits 0, and an unknown mode exits 2 with a
+  message on stderr.
+
+With that, every one of the seven backends this plugin ships has been driven
+against its real binary.
+
 ## [1.1.0] — 2026-08-09
 
 1.0.2 documented two backend quirks as things the plugin could not do anything
@@ -213,6 +260,7 @@ change, so `version = "*"` in lazy.nvim would pin users and never move them.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
 
+[1.1.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.1
 [1.1.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.0
 [1.0.2]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.2
 [1.0.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.1

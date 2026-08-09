@@ -97,7 +97,7 @@ return {
 		note = INPUT_SOURCE_ONLY,
 	},
 
-	--- im-select -- github.com/daehahn/im-select. macOS.
+	--- im-select -- github.com/daipeihust/im-select. macOS.
 	---
 	--- Older and more widely installed than `macism`, hence last in the macOS
 	--- chain rather than absent: if both are present, `macism` is the one that

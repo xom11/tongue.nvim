@@ -42,7 +42,7 @@ macism = {
   note = <cảnh báo input-source-only, nguyên văn ở mục 7>,
 },
 
-im_select = {  -- github.com/daehahn/im-select, macOS
+im_select = {  -- github.com/daipeihust/im-select, macOS
   english = "com.apple.keylayout.ABC",
   get = { "im-select" },
   set = { "im-select" },

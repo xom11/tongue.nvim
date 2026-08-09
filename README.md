@@ -47,7 +47,7 @@ costs none.
   |---|---|---|
   | macOS | [`tongue`](https://github.com/xom11/tongue) | `tongue` |
   | | [`macism`](https://github.com/laishulu/macism) | `macism` |
-  | | [`im-select`](https://github.com/daehahn/im-select) | `im_select` |
+  | | [`im-select`](https://github.com/daipeihust/im-select) | `im_select` |
   | Linux | `fcitx5-remote` (ships with fcitx5) | `fcitx5` |
   | | `ibus` (ships with ibus — the GNOME default) | `ibus` |
   | | [`xkb-switch`](https://github.com/grwlf/xkb-switch) | `xkb_switch` |
@@ -260,7 +260,13 @@ Forcing English is exactly what should happen there, and it does.
 Presets are available as `require("tongue.presets").tongue`, `.macism`,
 `.im_select`, `.im_select_exe`, `.fcitx5`, `.ibus` and `.xkb_switch`.
 
-**What has actually been run.**
+**What has actually been run.** Every one of the seven backends, against its
+real binary.
+
+- **tongue** — verified end to end on macOS 26.5.1 arm64 with Neovim 0.12.4,
+  through auto-detection rather than an explicit `backend`. Its contract is
+  exact: `tongue` prints the mode and exits 0, `tongue <mode>` is silent and
+  exits 0, an unknown mode exits 2 with a message on stderr.
 
 - **macism** — verified end to end on macOS 26.5.1 with Neovim 0.12.4 and macism
   3.1.1, driving the real macOS Vietnamese IM (`com.apple.inputmethod.VietnameseIM.VietnameseTelex`):
@@ -304,8 +310,15 @@ Presets are available as `require("tongue.presets").tongue`, `.macism`,
   macism failure with the last signal removed. Nothing a *running* plugin reads
   can detect it, so `:checkhealth tongue` tries the switch and looks. Run it
   while your other input method is active.
-- **im-select** (macOS) — **not run against the real binary.** Same shape as
-  macism, and covered as a chain and as data.
+- **im-select** (macOS) — driven end to end on **macOS 26.5.1 arm64 (Apple
+  silicon), Neovim 0.12.4, im-select 1.0.1**, against the real macOS Vietnamese
+  input method (`com.apple.inputmethod.VietnameseIM.VietnameseTelex`). `im-select`
+  prints `com.apple.keylayout.ABC` and exits 0; `im-select <id>` is silent and
+  exits 0 for a real input source and **exits 1 for one that does not exist** —
+  the cleanest of the input-source backends, since it is the only one that
+  reports a bad token at all. Full round trip, zero warnings. On the same machine
+  with `tongue` also installed, auto-detection still picks `tongue`, as the
+  ordering promises.
 
 Every OS chain, Linux and Windows included, is exercised from a Mac:
 `tests/backend_spec.lua` drives `resolve()` through an injected prober rather
