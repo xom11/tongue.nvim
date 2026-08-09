@@ -316,4 +316,28 @@ return function(t)
 		end
 		t.eq(presets.tongue.note, nil, "tongue moves both levers; it needs no warning")
 	end)
+
+	t.test("the measured Linux quirks are carried as notes, not lost in a commit message", function()
+		-- Each of these was measured against the real binary on Ubuntu 26.04, and
+		-- each is something a user cannot deduce from the plugin's behaviour:
+		--
+		--   ibus        exits 1 when it succeeds, so every restore looks failed
+		--   fcitx5      exits 0 in silence when it does NOT succeed
+		--   xkb-switch  moves the keyboard layout and cannot see a framework
+		--
+		-- `:checkhealth` is the only place a user meets them, and it only prints
+		-- what the preset carries.
+		for _, case in ipairs({
+			{ "ibus", "exits 1" },
+			{ "fcitx5", "exits 0" },
+			{ "xkb_switch", "layout" },
+		}) do
+			local note = presets[case[1]] and presets[case[1]].note
+			t.ok(type(note) == "string" and note ~= "", ("preset %q must carry a note"):format(case[1]))
+			t.ok(
+				note:find(case[2], 1, true) ~= nil,
+				("preset %q's note must still describe the measured quirk (%q)"):format(case[1], case[2])
+			)
+		end
+	end)
 end

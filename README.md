@@ -270,12 +270,31 @@ Presets are available as `require("tongue.presets").tongue`, `.macism`,
   documented. The pure specs now run there on every push (see [Tests](#tests));
   the rest of the suite cannot, because `tests/fixtures/fake-im` is a POSIX shell
   script. That is a limitation of the harness, not of the plugin.
-- **im-select** (macOS), **fcitx5**, **ibus**, **xkb-switch** — **not run against
-  the real binaries.** Their command shapes come from each tool's own
-  documentation, and their place in the detection chain is tested — but nobody
-  here has watched them move a real input method. If one is wrong for your
-  machine that is a bug worth reporting, and `:checkhealth tongue` will usually
-  name it.
+- **fcitx5, ibus and xkb-switch** — driven end to end on **Ubuntu 26.04 arm64,
+  Neovim 0.11.6**, in a headless sway 1.11 session with XWayland, against
+  fcitx5 5.1.19 + fcitx5-unikey, IBus 1.5.34-rc2 + ibus-unikey, and xkb-switch
+  2.1.0 with a `us,vn` layout pair. For each: startup records the live method and
+  forces English, a switch made by hand is remembered, entering Insert restores
+  it, leaving forces English again.
+
+  Two of the three have a sharp edge that only shows up against the real binary,
+  and `:checkhealth tongue` now prints both:
+
+  | | `get` | `set` on success | `set` on a bad token |
+  |---|---|---|---|
+  | `xkb-switch` | `us` | exit 0, silent | **exit 2 + a clear message** |
+  | `fcitx5` | one token — **empty with no focused input context** | exit 0, silent | **exit 0, silent, changes nothing** |
+  | `ibus` | `xkb:us::eng` | **exit 1** for an IME engine, 0 for an `xkb:` one | exit 1 |
+
+  `xkb-switch` fits the contract exactly. `fcitx5` accepts a name that is not in
+  your group in complete silence — the macism failure with the last signal
+  removed, and the one case this plugin genuinely cannot detect, so verify your
+  `english` by hand once. `ibus` exits 1 while succeeding, because `ibus engine`
+  also runs `setxkbmap` and that fails without a usable X display: switching
+  still works, but every restore is reported as a failed command and the
+  read-skipping fast path never engages.
+- **im-select** (macOS) — **not run against the real binary.** Same shape as
+  macism, and covered as a chain and as data.
 
 Every OS chain, Linux and Windows included, is exercised from a Mac:
 `tests/backend_spec.lua` drives `resolve()` through an injected prober rather

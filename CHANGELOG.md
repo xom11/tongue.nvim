@@ -5,6 +5,45 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] — 2026-08-09
+
+The three Linux backends stop being documented guesses. All three were driven
+end to end on **Ubuntu 26.04 arm64 / Neovim 0.11.6**, in a headless sway 1.11
+session with XWayland, against fcitx5 5.1.19 + fcitx5-unikey, IBus 1.5.34-rc2 +
+ibus-unikey, and xkb-switch 2.1.0 with a `us,vn` layout pair. For each: startup
+records the live method and forces English, a switch made by hand is remembered,
+entering Insert restores it, leaving forces English again.
+
+No behaviour changed. What changed is what `:checkhealth tongue` tells you.
+
+### Added
+
+- `presets.ibus` and `presets.fcitx5` now carry a `note`, because each has an
+  edge that only appears against the real binary and that a user cannot deduce
+  from the plugin's behaviour:
+  - **ibus** exits **1 when it succeeds.** `ibus engine <name>` also runs
+    `setxkbmap`, which fails without a usable X display; the engine changes
+    anyway. Switching to an `xkb:` engine (what `english` is) exits 0. The
+    plugin cannot tell that from a real failure, so it warns on every restore
+    and the read-skipping fast path never engages.
+  - **fcitx5** exits **0, silently, when it does not succeed.** An input-method
+    name that is not in your current group is accepted in silence and changes
+    nothing — the macism 3.1.1 failure with the last signal removed, and the one
+    case this plugin genuinely cannot detect. Its `-n` also prints nothing at
+    all without a focused input context.
+  - **xkb-switch** fits the contract exactly and is the only one of the three
+    that reports a bad token (exit 2, with a message).
+- `make doc` now checks vimdoc structure, not just width: code fences must
+  balance and the first line must carry the file's `*tag*`.
+
+### Fixed
+
+- **`doc/tongue.txt` shipped damaged in 1.0.0 and 1.0.1.** A reflow pass wrapped
+  straight through a `>lua` block in the Setup section, welding two config
+  examples and the closing `<` into a paragraph, and splitting the title line in
+  two. `helptags` does not validate either, and the width check that was added
+  at the time only counted columns — hence the structural check above.
+
 ## [1.0.1] — 2026-08-09
 
 Nothing here reaches a user's editor: `tests/lint.lua` is a development tool and
@@ -118,5 +157,6 @@ change, so `version = "*"` in lazy.nvim would pin users and never move them.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
 
+[1.0.2]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.2
 [1.0.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.1
 [1.0.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.0

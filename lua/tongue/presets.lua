@@ -24,6 +24,35 @@ local LAYOUT_ONLY = "this backend reads and writes the X keyboard layout only. I
 	.. "or any other input-method framework, so if one is running, it is what decides whether you type Vietnamese "
 	.. "-- and this cannot see it. Prefer the preset for whichever framework you run."
 
+--- Measured on Ubuntu 26.04 arm64 with IBus 1.5.34-rc2 under sway 1.11.
+---
+--- Selecting a real input-method engine makes `ibus engine` shell out to
+--- `setxkbmap`, and it exits 1 when that fails -- which it does on a Wayland
+--- session with no usable X display. The engine DOES change; only the exit code
+--- lies. Switching to an `xkb:` engine (which is what `english` is) exits 0.
+---
+--- So the plugin works, and says so noisily: every restore is reported as a
+--- failed command, and because a `set` it cannot believe is never recorded as
+--- applied, the read-skipping fast path never engages either.
+local IBUS_EXITS_NONZERO = "measured with IBus 1.5.34-rc2: selecting an input-method engine exits 1 even when it "
+	.. "succeeds, because `ibus engine` also runs `setxkbmap` and that fails without a usable X display. Switching "
+	.. "is not affected -- but tongue.nvim cannot tell that from a real failure, so it warns on every restore and "
+	.. "falls back to reading the machine before each switch. `notify = false` silences the warning; running under "
+	.. "X, or with XWayland reachable, removes the cause."
+
+--- Measured on Ubuntu 26.04 arm64 with fcitx5 5.1.19.
+---
+--- `fcitx5-remote -s` exits 0 and prints nothing whether the switch happened or
+--- not: an input-method name that is not in the current group is accepted in
+--- silence and changes nothing. That is the macism 3.1.1 failure shape with the
+--- last signal removed -- there is no exit code AND no output to read -- so it
+--- is the one case this plugin genuinely cannot detect.
+local FCITX5_SILENT_FAILURE = "measured with fcitx5 5.1.19: `fcitx5-remote -s` exits 0 and prints nothing even when "
+	.. "the input method does not exist or is not in your current group, so a wrong `english` gives you a plugin "
+	.. "that runs, reports healthy, and switches nothing. Check it by hand once: `fcitx5-remote -s <name>` then "
+	.. "`fcitx5-remote -n` should read it back. Note also that `-n` needs a focused input context and prints "
+	.. "nothing without one."
+
 return {
 	--- github.com/xom11/tongue -- macOS, and the reason this plugin exists.
 	---
@@ -101,10 +130,18 @@ return {
 	--- Deliberately no `tokens`: a fcitx5 install can carry any set of input
 	--- methods, so an allow-list here would reject perfectly valid setups. The
 	--- one-token rule in `sanitize` still catches garbage.
+	---
+	--- Measured on fcitx5 5.1.19: the contract fits exactly -- `-n` prints one
+	--- token, `-s <name>` is silent and exits 0 -- with one sharp edge that the
+	--- note records, and one that it cannot. `-n` needs a focused input context;
+	--- with none it prints NOTHING and still exits 0, which `sanitize` rejects as
+	--- empty output. That is the safe direction: an unreadable machine is never
+	--- restored to blind, only forced to English.
 	fcitx5 = {
 		english = "keyboard-us",
 		get = { "fcitx5-remote", "-n" },
 		set = { "fcitx5-remote", "-s" },
+		note = FCITX5_SILENT_FAILURE,
 	},
 
 	--- ibus, via its own CLI. Linux -- the default on GNOME.
@@ -117,12 +154,14 @@ return {
 	--- English engine is something else says so with `english = "..."`; `ibus
 	--- list-engine` prints the names this machine actually has.
 	---
-	--- No `note`: unlike macism, ibus IS the IME. Selecting an engine turns the
-	--- Vietnamese one off, which is the lever that matters.
+	--- Unlike macism, ibus IS the IME: selecting an engine turns the Vietnamese
+	--- one off, which is the lever that matters. The note below is about
+	--- something else -- see IBUS_EXITS_NONZERO.
 	ibus = {
 		english = "xkb:us::eng",
 		get = { "ibus", "engine" },
 		set = { "ibus", "engine" },
+		note = IBUS_EXITS_NONZERO,
 	},
 
 	--- xkb-switch -- github.com/grwlf/xkb-switch. Linux/X11.

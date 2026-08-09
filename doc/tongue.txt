@@ -1,5 +1,4 @@
-*tongue.txt*   Input-method switching for IMEs that are a process, not a
-source
+*tongue.txt*  Input-method switching for IMEs that are a process, not a source
 
                                                                  *tongue.nvim*
 ==============================================================================
@@ -86,10 +85,11 @@ Vietnamese, Japanese and Chinese input sources are served fine by them -- and
 <
 `backend` accepts a preset name as well as a table: >lua
 
-    require("tongue").setup({ backend = "macism" }) require("tongue").setup({
-    backend = "im-select" })  -- `im_select` too < `english` applies to
-    whatever backend was resolved, auto-detected included, and is validated
-    against it. The common case needs nothing else: >lua
+    require("tongue").setup({ backend = "macism" })
+    require("tongue").setup({ backend = "im-select" })  -- `im_select` too
+<
+`english` applies to whatever backend was resolved, auto-detected too, and
+is validated against it. The common case needs nothing else: >lua
 
     -- macism is installed; this machine types on US, not ABC
     require("tongue").setup({ english = "com.apple.keylayout.US" })
@@ -296,12 +296,21 @@ im-select.exe   driven end to end on Windows 11 ARM64, Neovim 0.12.4, as a
                 suite cannot, because tests/fixtures/fake-im is a POSIX shell
                 script. That is the harness, not the plugin.
 im-select       NOT run against the binary. Same shape as macism.
-fcitx5          NOT run against the binary.
-ibus            NOT run against the binary. `ibus engine` prints the active
-                engine, `ibus engine <name>` selects one; `ibus list-engine`
-                prints the names this machine has.
-xkb-switch      NOT run against the binary. Moves the X keyboard layout only,
-                hence the note and its place last in the Linux chain.
+fcitx5          driven end to end on Ubuntu 26.04 arm64, Neovim 0.11.6, fcitx5
+                5.1.19 + fcitx5-unikey, in a headless sway 1.11 session. Fits
+                the contract -- but `-s` exits 0 in SILENCE for a name not in
+                your group, changing nothing, and `-n` prints nothing at all
+                without a focused input context. See |tongue-health|.
+ibus            driven end to end on the same machine, IBus 1.5.34-rc2 with
+                ibus-unikey. Works, but `ibus engine <name>` EXITS 1 while
+                succeeding: it also runs setxkbmap, which fails without a
+                usable X display. Every restore is therefore reported as a
+                failed command, and the fast path never engages.
+xkb-switch      driven end to end on the same machine, xkb-switch 2.1.0 with a
+                us,vn layout pair. Fits the contract exactly, and is the only
+                one of the three that reports a bad token (exit 2, with a
+                message). Still moves the X keyboard layout only, hence its
+                note and its place last in the Linux chain.
 
 Every OS chain, Linux and Windows included, is exercised from a Mac:
 tests/backend_spec.lua drives resolve() through an injected prober rather than
