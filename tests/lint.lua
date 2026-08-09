@@ -15,7 +15,18 @@
 --- It also compiles every file, which is the cheapest smoke test there is and
 --- the reason a syntax error never reaches the suite.
 
-local root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
+--- Separators normalised to `/` everywhere below.
+---
+--- `vim.fn.globpath` hands back `tests\wiring_init.lua` on Windows, so the
+--- per-file exception keyed on `tests/wiring_init.lua` missed and the Windows CI
+--- job went red on the one file that is allowed to touch `_G`. Paths here are
+--- only ever compared and printed, never opened by the string, so one spelling
+--- is simpler than two.
+local function slash(p)
+	return (p:gsub("\\", "/"))
+end
+
+local root = slash(vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h"))
 
 --- Globals any file here may read.
 ---
@@ -113,6 +124,10 @@ local function selftest()
 	local found = globals(probe)
 	assert(found["GSEToops_g"], "lint.lua no longer sees a global WRITE -- did the bytecode format change?")
 	assert(found["GGETunknown_g"], "lint.lua no longer sees a global READ -- did the bytecode format change?")
+	-- Checked here because the machine that would notice is not the one you are
+	-- on: `globpath` answers with backslashes only on Windows, so the per-file
+	-- exception below silently stopped matching there and nowhere else.
+	assert(slash("tests\\wiring_init.lua") == "tests/wiring_init.lua", "path separators are not being normalised")
 end
 
 selftest()
@@ -132,7 +147,7 @@ local function fail(rel, msg)
 end
 
 for _, path in ipairs(files) do
-	local rel = path:sub(#root + 2)
+	local rel = slash(path):sub(#root + 2)
 	local fn, err = loadfile(path)
 	if not fn then
 		fail(rel, "does not compile: " .. tostring(err))
