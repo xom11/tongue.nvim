@@ -5,6 +5,22 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-08-09
+
+Nothing here reaches a user's editor: `tests/lint.lua` is a development tool and
+is not on any path the plugin runs. The tag exists so that the latest release
+points at a commit whose CI is green on every platform, `windows` included.
+
+### Fixed
+
+- `tests/lint.lua` reported a false positive on Windows. `vim.fn.globpath`
+  answers with `tests\wiring_init.lua` there, so the per-file exception keyed on
+  `tests/wiring_init.lua` did not match and the one file allowed to touch `_G`
+  was flagged. Separators are normalised now, and the linter's self-test checks
+  that too — the machine that would notice is not the one running the suite.
+
+  Found by the `windows` CI job added in 1.0.0, on its first real run.
+
 ## [1.0.0] — 2026-08-09
 
 The first tagged release. The plugin existed untagged before this, so the
@@ -102,4 +118,5 @@ change, so `version = "*"` in lazy.nvim would pin users and never move them.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
 
+[1.0.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.1
 [1.0.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.0
