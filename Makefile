@@ -31,7 +31,7 @@ fmt-check:
 # damage is invisible in a diff you skim. Counting the fences catches exactly it.
 doc:
 	@awk 'length > 78 { printf "%s:%d: %d columns (tw=78)\n", FILENAME, NR, length; bad=1 } \
-		/>(lua|vim)$$/ { opened++ } \
+		/(^|[^-])>[a-z]*$$/ { opened++ } \
 		/^<$$/ { closed++ } \
 		FNR == 1 && $$1 !~ /^\*[a-z._-]+\*$$/ { printf "%s:1: first line must start with a *tag*\n", FILENAME; bad=1 } \
 		END { \

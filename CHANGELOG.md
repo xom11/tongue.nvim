@@ -5,6 +5,62 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-08-09
+
+1.0.2 documented two backend quirks as things the plugin could not do anything
+about. One of them was wrong, and the other was only half true. Both are now
+handled, and both fixes were verified against the real binaries on Ubuntu 26.04.
+
+### Changed
+
+- **A `set` that reports failure is confirmed against the machine before it is
+  believed.** "Said it failed" and "failed" are not the same thing: IBus
+  1.5.34-rc2 exits 1 while the engine changes, because `ibus engine` also shells
+  out to `setxkbmap` and that fails without a usable X display. Taking the exit
+  code at its word cost a warning on every restore *and* forbade the cache, so
+  every boundary went back to reading first.
+
+  One read settles it, and it costs nothing on a backend that does not lie — the
+  confirmation only runs when a `set` reports failure at all. Measured against
+  real ibus: warnings per restore went from 1 to 0, and `applied` from `nil` to
+  the token, so the fast path works again.
+
+  It is deliberately not an ibus special case. The rule is unchanged — a `set`
+  we cannot believe is never recorded as applied — and all that changes is
+  refusing to conclude from an exit code when the machine can just be asked.
+
+- **`:checkhealth tongue` now tries the switch, not just the read.** That is the
+  only way to catch a `set` that lies in the other direction: fcitx5 5.1.19
+  accepts an input-method name outside your group in complete silence, exit 0,
+  changing nothing. There is no exit code and no output, so nothing a *running*
+  plugin reads can see it — but a diagnostic can switch and look.
+
+  The probe only ever switches *towards* `english`, only from somewhere else,
+  and puts the machine back. Already in English there is nothing to prove and it
+  says so. If it fails to restore, it fails towards the state Normal mode wants
+  anyway. Verified against real fcitx5 with a deliberately wrong `english`:
+
+  ```
+  error `fcitx5-remote -s keyboard-de` exited 0 and printed nothing,
+        but the machine is still "unikey"
+  ```
+
+  The README and `:help tongue-health` previously said health "only ever reads",
+  as if that were a property rather than a choice. It was a choice.
+
+### Fixed
+
+- **Two tests were racing the clock and one of them lost.** `fixture_spec` and
+  `state_spec` both had to write the machine *inside* a read window, and both
+  did it by guessing (`vim.wait(50)`, `vim.wait(25)`) how long a shell takes to
+  start. The suite got heavier and the guess started failing. The fixture now
+  reports when it has taken its snapshot, and the tests wait for that.
+- `state_spec`'s stale-read test was opening its read window with `h.enter()` —
+  which stopped reading the machine when the fast path landed in 1.0.0. It had
+  been passing on its other assertions ever since. It now opens the window on
+  the way *out*, where `observe` guarantees a read, and it has been re-verified
+  to fail when the epoch guard is removed.
+
 ## [1.0.2] — 2026-08-09
 
 The three Linux backends stop being documented guesses. All three were driven
@@ -157,6 +213,7 @@ change, so `version = "*"` in lazy.nvim would pin users and never move them.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
 
+[1.1.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.0
 [1.0.2]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.2
 [1.0.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.1
 [1.0.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.0

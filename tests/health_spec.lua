@@ -139,6 +139,47 @@ return function(t)
 		t.eq(find(seen, "warn", "lever"), nil, "no note, no warning")
 	end)
 
+	t.test("health exercises `set`, and puts the machine back", function()
+		-- The only way to catch a backend whose `set` lies: measured on fcitx5
+		-- 5.1.19, `-s <a name not in your group>` exits 0, prints nothing and
+		-- changes nothing. There is no exit code and no output for the running
+		-- plugin to read -- but a diagnostic can just look.
+		h.arm({ machine = "vi" })
+		h.settle()
+		h.enter()
+		h.settle()
+		t.eq(h.machine(), "vi", "precondition: not already in English")
+
+		local ok, err, seen = check()
+		t.ok(ok, "must not throw: " .. tostring(err))
+		t.ok(find(seen, "ok", "`set` works") ~= nil, "a working set must be reported: " .. vim.inspect(seen))
+		t.eq(h.machine(), "vi", "and the machine must be left where the user had it")
+		h.leave()
+		h.settle()
+	end)
+
+	t.test("a `set` that exits 0 and changes nothing is caught here, and nowhere else", function()
+		h.arm({ machine = "vi", set_noise = "" })
+		h.settle()
+		h.enter()
+		h.settle()
+		-- From here the fixture accepts every `set` in silence and ignores it,
+		-- which is exactly what fcitx5 does with a name outside your group.
+		vim.env.FAKE_IM_SET_NOISE = nil
+		vim.env.FAKE_IM_SET_IGNORE = "1"
+		local ok, err, seen = check()
+		vim.env.FAKE_IM_SET_IGNORE = nil
+		t.ok(ok, "must not throw: " .. tostring(err))
+		local e = find(seen, "error", "exited 0 and printed nothing")
+		t.ok(e ~= nil, "the silent failure must be an error: " .. vim.inspect(seen))
+		t.ok(
+			table.concat(e.advice or {}, " "):find("no exit code", 1, true) ~= nil,
+			"and it must say why the plugin itself cannot see it"
+		)
+		h.leave()
+		h.settle()
+	end)
+
 	t.test("a config bug is an error, not the same `info` as an SSH session", function()
 		-- `resolve` computes the distinction and `setup` records it; it used to be
 		-- thrown away one line later. A user who typo'd their config and ran the

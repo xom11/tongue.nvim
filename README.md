@@ -211,9 +211,9 @@ an error rather than a plugin that runs while discarding every reading it takes.
 > **Get `english` right.** Measured on macism 3.1.1: an input source that does
 > not exist on this machine makes it print `Input source … does not exist!` **on
 > stdout** and exit **0** — a failure with no exit code to read. The plugin
-> catches this (a `set` that prints anything is treated as failed, and warns),
-> but `:checkhealth` cannot: it only ever *reads*. So verify your value by hand
-> once — `macism <your-id>` then `macism` should read it back.
+> catches this (a `set` that prints anything is not believed), and so does
+> `:checkhealth tongue`, which tries the switch rather than only reading. Run it
+> while your other input method is active.
 
 ### Custom backends
 
@@ -241,10 +241,16 @@ plausible-looking token, which then gets stored and replayed as an argument
 forever.
 
 `set` must be **silent** on success. Anything it writes to stdout is treated as a
-failure and warned about, whatever the exit code says — `tongue en` and
-`fcitx5-remote -s` both print nothing, and macism 3.1.1 reports a nonexistent
-input source exactly that way while still exiting 0. A backend with no exit code
-worth reading leaves its output as the only evidence there is.
+failure, whatever the exit code says — `tongue en` and `fcitx5-remote -s` both
+print nothing, and macism 3.1.1 reports a nonexistent input source exactly that
+way while still exiting 0. A backend with no exit code worth reading leaves its
+output as the only evidence there is.
+
+A `set` that reports failure is **confirmed against the machine** before it is
+believed, because "said it failed" and "failed" are not the same thing: IBus
+1.5.34-rc2 exits 1 while the engine changes, since `ibus engine` also shells out
+to `setxkbmap`. One read settles it, and it costs nothing on a backend that does
+not lie — the confirmation only happens when a `set` reports failure at all.
 
 `unknown` is what your backend prints when it does not recognise the live state.
 It is **not** treated as English: a shrug is not evidence, so the plugin neither
@@ -286,13 +292,18 @@ Presets are available as `require("tongue.presets").tongue`, `.macism`,
   | `fcitx5` | one token — **empty with no focused input context** | exit 0, silent | **exit 0, silent, changes nothing** |
   | `ibus` | `xkb:us::eng` | **exit 1** for an IME engine, 0 for an `xkb:` one | exit 1 |
 
-  `xkb-switch` fits the contract exactly. `fcitx5` accepts a name that is not in
-  your group in complete silence — the macism failure with the last signal
-  removed, and the one case this plugin genuinely cannot detect, so verify your
-  `english` by hand once. `ibus` exits 1 while succeeding, because `ibus engine`
-  also runs `setxkbmap` and that fails without a usable X display: switching
-  still works, but every restore is reported as a failed command and the
-  read-skipping fast path never engages.
+  `xkb-switch` fits the contract exactly.
+
+  `ibus` exits 1 while succeeding, because `ibus engine` also runs `setxkbmap`
+  and that fails without a usable X display. The plugin handles it: a `set` that
+  reports failure is **confirmed against the machine** before being believed, so
+  the lie costs one extra read per restore and nothing else — no warning, and the
+  cache stays usable. That confirmation is general, not an ibus special case.
+
+  `fcitx5` accepts a name that is not in your group in complete silence — the
+  macism failure with the last signal removed. Nothing a *running* plugin reads
+  can detect it, so `:checkhealth tongue` tries the switch and looks. Run it
+  while your other input method is active.
 - **im-select** (macOS) — **not run against the real binary.** Same shape as
   macism, and covered as a chain and as data.
 
@@ -363,7 +374,7 @@ vim.api.nvim_create_autocmd("BufLeave", {
 Every failure mode here is silent by nature: the plugin does nothing visible
 when it works, and nothing visible when the backend is missing, renamed, or is a
 different program that happens to share its name. Health is where you find out
-which. It runs one real read, within your configured `timeout`, and reports:
+which. It reports:
 
 - which backend was resolved and why, and whether it is currently disabled
 - both the `get` and the `set` binary, resolved to full paths
@@ -371,6 +382,21 @@ which. It runs one real read, within your configured `timeout`, and reports:
 - a token outside the backend's declared set — what a name collision looks like
 - a **config bug**, as an error rather than the same neutral note as "there is no
   IME tool on this machine"
+
+It also **tries the switch**, not just the read — and that is the only way to
+catch a `set` that lies, which is the failure people actually hit (`fcitx5` with
+a name outside your group; macism with an input source that does not exist).
+The probe only ever switches *towards* `english`, and only from somewhere else,
+then puts the machine back:
+
+```
+ok    reads back "unikey"
+ok    `set` works: "unikey" -> "keyboard-us"
+```
+
+If you are already in English there is nothing to prove, and it says so — switch
+to your other input method and run it again. If it fails to restore, it fails
+towards the state Normal mode wants anyway.
 
 ## Troubleshooting
 

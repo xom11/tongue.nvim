@@ -32,6 +32,15 @@
 #   FAKE_IM_FAIL      khac rong -> thoat 1 va khong lam gi
 #   FAKE_IM_SET_NOISE khac rong -> `set` in chuoi nay ra STDOUT, KHONG doi
 #                     state, va van thoat 0
+#   FAKE_IM_SET_IGNORE khac rong -> `set` thoat 0, KHONG in gi, KHONG doi gi
+#   FAKE_IM_SNAP_MARKER  duong dan -> duong `get` NOI THEM mot byte vao file nay
+#                     ngay sau khi chup state, truoc khi ngu. Do la cach test
+#                     doi den dung cua so nguy hiem ma khong phai doan thoi gian.
+#   FAKE_IM_SET_EXIT  khac rong -> `set` DOI state binh thuong roi thoat voi ma
+#                     nay. Do la hinh dang cua IBus 1.5.34-rc2, do that: `ibus
+#                     engine <mot engine IME>` doi engine xong van thoat 1, vi
+#                     no con goi setxkbmap va cai do hong khi khong co X display.
+#                     Ma thoat noi doi, con may thi da o dung cho.
 #
 # Do tre la thu bat buoc phai gia lap duoc: `tongue` that mat ~40-50 ms, va toan
 # bo may trang thai cua plugin ton tai chi vi do tre do. Test khong dieu khien
@@ -70,6 +79,13 @@ if [ "$#" -eq 0 ]; then
 	else
 		snap=""
 	fi
+	# Bao ra ngoai la da chup xong. Test can doi den DUNG thoi diem nay roi moi
+	# ghi de state -- truoc do thi so doc ve tuoi va test khong chung minh gi.
+	# Truoc day cho bang `vim.wait(25)`; do la cuoc do voi thoi gian khoi dong
+	# cua mot shell script, va no thua khi may ban.
+	if [ -n "${FAKE_IM_SNAP_MARKER:-}" ]; then
+		printf 'x' >>"$FAKE_IM_SNAP_MARKER"
+	fi
 	nap
 	printf '%s\n' "$snap"
 else
@@ -82,5 +98,17 @@ else
 		printf '%s\n' "$FAKE_IM_SET_NOISE"
 		exit 0
 	fi
+	if [ -n "${FAKE_IM_SET_IGNORE:-}" ]; then
+		# Dung cach fcitx5 5.1.19 hong voi mot ten IM khong nam trong group: thoat
+		# 0, KHONG in gi, va KHONG doi gi. Do la hinh dang loi cua macism nhung da
+		# go not tin hieu cuoi cung -- khong ma thoat, khong output. Plugin dang
+		# chay khong the thay; `:checkhealth` thi nhin thang vao may nen thay.
+		exit 0
+	fi
 	printf '%s' "$1" >"$state"
+	if [ -n "${FAKE_IM_SET_EXIT:-}" ]; then
+		# Doi that roi moi bao hong -- xem ghi chu FAKE_IM_SET_EXIT dau file.
+		echo "fake-im: Execute setxkbmap failed: Cannot open display" >&2
+		exit "$FAKE_IM_SET_EXIT"
+	fi
 fi

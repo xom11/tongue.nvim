@@ -97,9 +97,9 @@ is validated against it. The common case needs nothing else: >lua
 Get `english` right. Measured on macism 3.1.1: an input source that does not
 exist on this machine makes it print "Input source ... does not exist!" on
 STDOUT and exit 0 -- a failure with no exit code to read. The plugin catches
-that (a `set` that prints anything counts as failed, and warns), but
-|tongue-health| cannot: it only ever reads. Verify by hand once: `macism <id>`
-then `macism` should read it back.
+that (a `set` that prints anything is not believed), and so does
+|tongue-health|, which tries the switch rather than only reading -- run it
+while your other input source is active. See |tongue-set-probe|.
 
 `timeout` is validated rather than silently defaulted. Below 100ms the
 deadline fires before a healthy backend can answer, which is indistinguishable
@@ -266,10 +266,16 @@ stdout turn a stray warning line into one plausible-looking token, which then
 gets stored and replayed as an argument forever.
 
 `set` must be SILENT on success. Anything it writes to stdout counts as
-failure and is warned about, whatever the exit code says -- `tongue en` and
-`fcitx5-remote -s` print nothing, while macism 3.1.1 reports a nonexistent
-input source exactly that way and still exits 0. A backend with no exit code
-worth reading leaves its output as the only evidence there is.
+failure, whatever the exit code says -- `tongue en` and `fcitx5-remote -s`
+print nothing, while macism 3.1.1 reports a nonexistent input source exactly
+that way and still exits 0. A backend with no exit code worth reading leaves
+its output as the only evidence there is.
+
+A `set` that reports failure is CONFIRMED against the machine before it is
+believed: "said it failed" and "failed" are not the same thing. IBus
+1.5.34-rc2 exits 1 while the engine changes, because `ibus engine` also shells
+out to setxkbmap. One read settles it, and costs nothing on a backend that
+does not lie: the confirmation happens only when a `set` reports failure.
 
 `unknown` is what the backend prints when it does not recognise the live
 state. It is NOT treated as English: a shrug is not evidence, so the plugin
@@ -327,6 +333,20 @@ resolves both the `get` and the `set` binary to full paths, runs one real read
 within the configured `timeout`, and flags a backend that writes to stderr on
 success or answers with something outside its declared token set -- which is
 what a name collision looks like from here.
+
+                                                            *tongue-set-probe*
+It also TRIES THE SWITCH, which is the only way to catch a `set` that lies --
+fcitx5 with a name outside your group, macism with an input source that does
+not exist. Nothing a running plugin reads can see that. The probe only ever
+switches TOWARDS `english`, and only from somewhere else, then puts the
+machine back: >
+
+    ok    reads back "unikey"
+    ok    `set` works: "unikey" -> "keyboard-us"
+<
+Already in English there is nothing to prove, and it says so -- switch to your
+other input method and run it again. If it fails to restore, it fails towards
+the state Normal mode wants anyway.
 
 A CONFIG BUG is reported as an error, not as the same neutral note as "there
 is no IME tool on this machine". The distinction matters: the startup

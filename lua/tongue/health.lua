@@ -181,6 +181,60 @@ function H.check()
 		h_ok(("reads back %q"):format(token))
 	end
 
+	-- ── does `set` actually set? ─────────────────────────────────────────────
+	--
+	-- Health used to only ever READ, and said so in the docs as if it were a law.
+	-- It is not: it is the one place that can afford a round trip, and a `set`
+	-- that lies is the failure people actually hit. Measured on fcitx5 5.1.19,
+	-- `fcitx5-remote -s <a name not in your group>` exits 0, prints nothing, and
+	-- changes nothing -- the macism 3.1.1 shape with the last signal removed. The
+	-- plugin cannot see that at the moment of the switch. Here we can just look.
+	--
+	-- Only ever towards `english`, and only from somewhere else, so the machine
+	-- ends where it started: if the probe fails to restore, it fails towards the
+	-- state Normal mode wants anyway.
+	if token == "" or (cfg.unknown and token == cfg.unknown) then
+		return -- nothing trustworthy to restore to
+	end
+
+	if token == cfg.english then
+		h_info("`set` not exercised: already in English, and the probe only ever switches towards it", {
+			"switch to your other input method and run this again to test it",
+		})
+	else
+		local set_argv = vim.list_extend(vim.list_slice(cfg.set, 1, #cfg.set), { cfg.english })
+		local sout, serr = run(set_argv, st.timeout)
+		if not sout then
+			h_error(("could not run `%s`: %s"):format(table.concat(set_argv, " "), serr))
+		else
+			local printed = ((sout.stdout or "") .. (sout.stderr or "")):gsub("%s+$", "")
+			local back = run(cfg.get, st.timeout)
+			local now = back and (back.stdout or ""):gsub("^%s+", ""):gsub("%s+$", "") or ""
+			if now == cfg.english then
+				h_ok(("`set` works: %q -> %q"):format(token, cfg.english))
+			elseif sout.code == 0 and printed == "" then
+				-- The one failure with no signal at all in it.
+				h_error(
+					("`%s` exited 0 and printed nothing, but the machine is still %q"):format(
+						table.concat(set_argv, " "),
+						now
+					),
+					{
+						("is %q the right `english` for this backend?"):format(cfg.english),
+						"the plugin cannot detect this while running -- there is no exit code and no output to read",
+					}
+				)
+			else
+				h_error(("`%s` did not take: machine is still %q"):format(table.concat(set_argv, " "), now), {
+					printed ~= "" and printed or ("exit " .. tostring(sout.code)),
+				})
+			end
+			-- Put it back where the user had it, whatever happened above.
+			local restore = vim.list_extend(vim.list_slice(cfg.set, 1, #cfg.set), { token })
+			run(restore, st.timeout)
+		end
+	end
+
 	h_info(("remembered Insert-mode layout: %s"):format(tostring(st.last_layout)))
 	h_info(("command timeout: %d ms   verify: %s"):format(st.timeout, tostring(st.verify)))
 end

@@ -64,6 +64,10 @@ function M.arm(o)
 	vim.env.FAKE_IM_DELAY_MS = tostring(o.delay or 0)
 	vim.env.FAKE_IM_FAIL = o.fail and "1" or nil
 	vim.env.FAKE_IM_SET_NOISE = o.set_noise or nil
+	vim.env.FAKE_IM_SET_EXIT = o.set_exit and tostring(o.set_exit) or nil
+	M.marker = ("%s/snap%d"):format(tmp, seq)
+	vim.fn.writefile({}, M.marker)
+	vim.env.FAKE_IM_SNAP_MARKER = M.marker
 
 	M.backend = {
 		english = "en",
@@ -104,6 +108,33 @@ end
 
 function M.leave()
 	M.mode("i", "n")
+end
+
+--- How many readings the fixture has snapshotted so far.
+local function snaps()
+	local st = uv.fs_stat(M.marker or "")
+	return st and st.size or 0
+end
+
+--- Block until the in-flight `get` has taken its snapshot, and not a moment
+--- longer.
+---
+--- The cases that matter here all turn on writing the machine INSIDE the read
+--- window: too early and the reading comes back fresh, so the test proves
+--- nothing and passes against the very bug it is named for. That timing used to
+--- be guessed -- `vim.wait(25)`, `vim.wait(50)` -- which is a race with a shell
+--- script's startup, and it lost the first time the suite got heavier.
+---@param timeout integer?
+function M.await_snapshot(timeout)
+	local before = snaps()
+	local t0 = uv.hrtime()
+	while (uv.hrtime() - t0) / 1e6 < (timeout or 3000) do
+		if snaps() > before then
+			return true
+		end
+		vim.wait(5)
+	end
+	error("the fixture never reached its snapshot", 2)
 end
 
 --- Wait until no cycle is in flight AND none starts for a further 100 ms.

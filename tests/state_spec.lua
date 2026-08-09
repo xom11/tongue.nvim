@@ -184,16 +184,27 @@ return function(t)
 		-- and zero `set` commands issued.
 		h.arm({ machine = "en", delay = 60 })
 		h.settle()
-		h.enter() -- read starts here
-		-- Wait for the child to actually reach its snapshot. Without this the
-		-- write below lands BEFORE the fork gets to read, the reading comes back
-		-- fresh, and the test proves nothing -- it passed with the fix removed.
-		vim.wait(25)
+		h.enter()
+		h.settle()
+
+		-- The read window is on the way OUT, not the way in. Entering Insert
+		-- stopped reading the machine when the fast path landed, so the version of
+		-- this test that opened its window with `h.enter()` was describing a read
+		-- that no longer happens -- and stayed green on the strength of its other
+		-- assertions. `observe` is what guarantees a read here, and `observe` is
+		-- only ever set on the way out.
+		h.leave() -- read starts here
+		-- Block until the child has actually taken its snapshot. Without this the
+		-- write below can land BEFORE the fork gets to read, the reading comes
+		-- back fresh, and the test proves nothing. This used to be `vim.wait(25)`,
+		-- a bet on how fast a shell starts; the fixture now says when it is ready.
+		h.await_snapshot()
 		h.set_machine("vi") -- user's global hotkey, inside the read window
+		h.enter() -- boundary crossed while that reading is still in flight
 		h.leave() -- and straight back out
 		h.settle()
 		t.eq(h.machine(), "en", "must not be left in Normal mode with the IME on")
-		t.eq(st().last_layout, "vi", "and the switch made mid-Insert must be remembered")
+		t.eq(st().last_layout, "vi", "and the switch made behind our back must be remembered")
 	end)
 
 	t.test("a switch made mid-Insert survives a fast exit", function()
@@ -384,6 +395,76 @@ return function(t)
 		t.eq(h.machine(), "vi", "a rejected setup must not poison the next one")
 		h.leave()
 		h.settle()
+	end)
+
+	t.test("a `set` whose exit code lies is confirmed, not believed", function()
+		-- Measured on IBus 1.5.34-rc2: `ibus engine <an IME engine>` changes the
+		-- engine and then exits 1, because it also shells out to `setxkbmap` and
+		-- that fails without a usable X display. Taking the exit code at its word
+		-- costs a warning on every restore AND forbids the cache, so every
+		-- boundary goes back to reading first.
+		--
+		-- One read settles it. The rule is unchanged -- a `set` we cannot believe
+		-- is not recorded as applied -- but the exit code stops being the last
+		-- word when the machine itself can be asked.
+		local real = vim.notify
+		local seen = {}
+		vim.notify = function(msg)
+			seen[#seen + 1] = tostring(msg)
+		end
+		local ok, err = pcall(function()
+			h.arm({ machine = "vi", set_exit = 1, notify = true })
+			h.settle()
+			h.enter()
+			h.settle()
+		end)
+		vim.wait(150)
+		vim.notify = real
+		t.ok(ok, "must not throw: " .. tostring(err))
+
+		t.eq(h.machine(), "vi", "the switch did happen, whatever the exit code said")
+		t.eq(st().applied, "vi", "and it must be recorded, or the cache is dead for the session")
+		t.eq(#seen, 0, "a switch that worked must not be reported as a failure: " .. vim.inspect(seen))
+
+		-- And the cache being alive is the whole point: the next entry into
+		-- Insert costs nothing.
+		h.leave()
+		h.settle()
+		local before = #h.calls()
+		h.enter()
+		h.settle()
+		t.ok(#h.calls() - before <= 2, "the fast path must be usable again")
+		h.leave()
+		h.settle()
+	end)
+
+	t.test("a `set` that really did nothing is still not believed", function()
+		-- The counterweight. Confirming a failed `set` must not become a way of
+		-- believing every failure: the fixture's noisy `set` exits 0 and changes
+		-- nothing, and the confirming read is what proves it changed nothing.
+		local real = vim.notify
+		local seen = {}
+		vim.notify = function(msg)
+			seen[#seen + 1] = tostring(msg)
+		end
+		local ok, err = pcall(function()
+			h.arm({ machine = "vi", set_noise = "Input source en does not exist!", notify = true })
+			h.settle()
+			vim.wait(200)
+		end)
+		vim.wait(150)
+		vim.notify = real
+		t.ok(ok, "must not throw: " .. tostring(err))
+
+		t.eq(h.machine(), "vi", "the fixture must not have moved -- that is the point of the case")
+		t.eq(st().applied, nil, "a set we cannot trust must not be recorded as applied")
+		local told = false
+		for _, m in ipairs(seen) do
+			if m:find("does not exist", 1, true) then
+				told = true
+			end
+		end
+		t.ok(told, "and the user still has to be told: " .. vim.inspect(seen))
 	end)
 
 	t.test("setup() twice does not double up", function()

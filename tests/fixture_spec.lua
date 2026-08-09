@@ -11,6 +11,7 @@
 --- every other test in the suite.
 
 local h = require("helpers")
+local uv = vim.uv or vim.loop
 
 return function(t)
 	t.test("fake-im reports the state from when it started, not when it finished", function()
@@ -19,9 +20,12 @@ return function(t)
 		local state = tmp .. "/state"
 		vim.fn.writefile({ "en" }, state)
 
+		local marker = tmp .. "/snap"
+		vim.fn.writefile({}, marker)
 		local env = {
 			FAKE_IM_STATE = state,
 			FAKE_IM_DELAY_MS = "150",
+			FAKE_IM_SNAP_MARKER = marker,
 		}
 
 		local out, done = nil, false
@@ -30,9 +34,18 @@ return function(t)
 			done = true
 		end)
 
-		-- Let it get past the fork and reach its snapshot, then move the state
-		-- underneath it.
-		vim.wait(50)
+		-- Wait for the snapshot to have been taken, then move the state
+		-- underneath it. `vim.wait(50)` used to stand here, and it was a bet on
+		-- how fast a shell script starts -- a bet this suite lost the first time
+		-- it got heavier, turning the whole run red for a reason that had nothing
+		-- to do with the plugin.
+		t.ok(
+			vim.wait(3000, function()
+				local s = uv.fs_stat(marker)
+				return s ~= nil and s.size > 0
+			end, 5),
+			"the fixture must reach its snapshot"
+		)
 		vim.fn.writefile({ "vi" }, state)
 
 		t.ok(

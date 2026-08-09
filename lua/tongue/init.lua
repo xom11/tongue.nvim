@@ -122,7 +122,7 @@ local warned = {}
 --- the editor, and burying it is how a user ends up disabling the warning
 --- instead of fixing the cause. Formatting happens AFTER the throttle, so the
 --- suppressed messages cost nothing but their arguments.
-local function warn(key, fmt, ...)
+local function warn_raw(key, msg)
 	if not notify then
 		return
 	end
@@ -131,10 +131,18 @@ local function warn(key, fmt, ...)
 		return
 	end
 	warned[key] = now
-	local msg = fmt:format(...)
 	vim.schedule(function()
 		vim.notify("tongue.nvim: " .. msg, vim.log.levels.WARN)
 	end)
+end
+
+local function warn(key, fmt, ...)
+	-- Throttle first, format second. A broken backend fires on every mode change,
+	-- and the 99% that are suppressed should cost nothing but their arguments.
+	if not notify or (warned[key] and (uv.hrtime() - warned[key]) < 30e9) then
+		return
+	end
+	warn_raw(key, fmt:format(...))
 end
 
 local function clip(s)
@@ -274,15 +282,41 @@ local function set_async(b, token, cb)
 	end
 	argv[n + 1] = token
 
+	--- The command says it failed. Ask the machine before believing it.
+	---
+	--- "Said it failed" and "failed" are not the same thing, and the gap is not
+	--- hypothetical: measured on IBus 1.5.34-rc2, `ibus engine <an IME engine>`
+	--- exits 1 while the engine changes, because it also shells out to
+	--- `setxkbmap` and that fails without a usable X display. Taking the exit code
+	--- at its word there costs a warning on every single restore, and -- worse --
+	--- forbids the cache, so every boundary goes back to reading first.
+	---
+	--- One read settles it, and it costs nothing on a backend that does not lie:
+	--- this branch is only reached when a `set` reports failure at all.
+	---
+	--- It is deliberately not an ibus special case. The rule stays "a `set` we
+	--- cannot believe is not recorded as applied"; all that changes is refusing to
+	--- conclude from an exit code when the machine itself can be asked.
+	local function unbelievable(key, msg)
+		get_async(b, function(current, unsure)
+			if current == token and not unsure then
+				return cb(true)
+			end
+			warn_raw(key, msg)
+			cb(false)
+		end)
+	end
+
 	run(argv, function(out)
 		if out.code ~= 0 then
-			warn("set-failed", "`%s %s` %s%s", set_str, token, why_code(out.code), tail(out.stderr))
-			return cb(false)
+			return unbelievable(
+				"set-failed",
+				("`%s %s` %s%s"):format(set_str, token, why_code(out.code), tail(out.stderr))
+			)
 		end
 		local said = (out.stdout or ""):gsub("^%s+", ""):gsub("%s+$", "")
 		if said ~= "" then
-			warn("set-noisy", "`%s %s` exited 0 but printed: %s", set_str, token, clip(said))
-			return cb(false)
+			return unbelievable("set-noisy", ("`%s %s` exited 0 but printed: %s"):format(set_str, token, clip(said)))
 		end
 		cb(true)
 	end)
