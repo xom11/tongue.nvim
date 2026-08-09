@@ -5,7 +5,18 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [1.0.0] — 2026-08-09
+
+The first tagged release. The plugin existed untagged before this, so the
+entries below describe what changed relative to that untagged state rather than
+to a previous version.
+
+`1.0.0` rather than `0.x` because the public surface is now settled and
+documented — `setup()`, `enable()`, `disable()`, `toggle()`, `sync()`,
+`token()`, `layout()`, `statusline()`, the `User TongueChanged` event, and the
+backend table contract. Anything that breaks those will be `2.0.0`. It also
+matters practically: under semver, `0.x` makes every minor bump a breaking
+change, so `version = "*"` in lazy.nvim would pin users and never move them.
 
 ### Added
 
@@ -90,3 +101,5 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   command-line modes.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
+
+[1.0.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.0
