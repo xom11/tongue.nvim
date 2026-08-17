@@ -102,6 +102,7 @@ method that matters belongs to the client, not to the host you typed on.
 | switch IME yourself mid-Insert | notices, and restores *that* next time |
 | completion popups, `i_CTRL-O` | nothing — those never leave Insert |
 | regain window focus in Normal mode | re-reads the machine and re-asserts English |
+| leave the editor entirely — another pane, `<C-z>`, `:q` | nothing, unless `restore_on_unfocus = true` |
 
 Every backend call is asynchronous and single-flight: 60 mode changes in a burst
 cost one process, not 60.
@@ -120,6 +121,44 @@ mode**, with no focus event to notice it. That change now survives into Insert
 instead of being overwritten — arguably what pressing the hotkey meant — and
 `setup({ verify = true })` buys the old read-before-every-switch behaviour back
 if you disagree.
+
+### Leaving the editor
+
+An input method is machine-global. Everything above can ignore that, because
+"Normal mode" and "Insert mode" only exist while Neovim has the keyboard — but
+the moment it does not, forcing English is forcing it on whatever you switched
+*to*. Alt-tab to a browser from Normal mode and you are typing English there,
+with no way back except your own hotkey.
+
+`restore_on_unfocus = true` gives the layout back on the way out:
+
+```lua
+require("tongue").setup({ restore_on_unfocus = true })
+```
+
+Three ways out, and only one of them is a focus event:
+
+| Leaving by | Event | How the restore is issued |
+|---|---|---|
+| another pane, tab, window, app | `FocusLost` | asynchronously, like every other switch |
+| `<C-z>` | `VimSuspend` | **blocking** |
+| `:q` | `VimLeavePre` | **blocking** |
+
+The last two fire no focus event at all — the terminal that owns the pane never
+stopped being focused, so nothing announces them — and neither has a "later" to
+schedule into. `<C-z>` stops the process, so a callback runs only once the user
+is already back; `VimLeavePre` is the last moment the event loop exists. Both
+therefore block for as long as the backend takes (~200 ms with `tongue`), once,
+on a keystroke you are already waiting on. Handling only `FocusLost` fixes the
+case you noticed and leaves the neighbouring two to read as an intermittent bug.
+
+Coming back is unchanged: `FocusGained` (and `VimResume`) re-read the machine and
+re-assert English, so Normal mode is English again before you type into it.
+
+It is off by default because the cost is real — every focus change across the
+boundary costs a backend call, and a terminal that reports focus while an IME
+candidate window is open will report it more often than you expect. Turn it on
+if you live in a multiplexer.
 
 ## Commands
 
@@ -174,6 +213,9 @@ require("tongue").setup({
   -- last successful one. Costs one extra process per Insert entry; buys back
   -- noticing an input method you changed in Normal mode. See "Behaviour".
   verify = false,
+  -- Put your layout back when Neovim stops being the editor you are typing
+  -- into: focus lost, <C-z>, or :q. See "Leaving the editor".
+  restore_on_unfocus = false,
 })
 ```
 

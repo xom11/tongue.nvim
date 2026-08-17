@@ -81,6 +81,7 @@ Vietnamese, Japanese and Chinese input sources are served fine by them -- and
       notify  = true,   -- warn on backend failure (throttled, 30s per kind)
       timeout = 2000,   -- per-command deadline in milliseconds, minimum 100
       verify  = false,  -- read the machine before every switch
+      restore_on_unfocus = false,  -- give the layout back when you leave
     })
 <
 `backend` accepts a preset name as well as a table: >lua
@@ -133,6 +134,7 @@ inert is not a config bug and stays silent.
     manual switch in Insert noticed on the way out, restored next time
     completion, i_CTRL-O    nothing; these never leave Insert
     FocusGained in Normal   re-read the machine, re-assert English
+    leaving the editor      nothing, unless |tongue-unfocus|
 
 All backend calls are asynchronous and single-flight: a burst of 60 mode
 changes costs one process.
@@ -150,6 +152,41 @@ What that gives up is one case: an input method changed by hand IN NORMAL
 MODE, with no focus event to notice it. That change now survives into Insert
 instead of being overwritten. `verify = true` buys the old
 read-before-every-switch behaviour back.
+
+                                                              *tongue-unfocus*
+LEAVING THE EDITOR ~
+
+An input method is machine-global. Everything above can ignore that, because
+Normal mode and Insert mode only exist while Neovim has the keyboard -- but
+the moment it does not, forcing English forces it on whatever you switched TO.
+Alt-tab to a browser from Normal mode and you type English there, with no way
+back but your own hotkey.
+
+`restore_on_unfocus = true` gives the layout back on the way out: >lua
+
+    require("tongue").setup({ restore_on_unfocus = true })
+<
+Three ways out, and only one is a focus event:
+
+    another pane/tab/app    FocusLost     async, like every other switch
+    <C-z>                   VimSuspend    BLOCKING
+    :q                      VimLeavePre   BLOCKING
+
+The last two fire no focus event at all -- the terminal owning the pane never
+stopped being focused, so nothing announces them -- and neither has a "later"
+to schedule into. <C-z> stops the process, so a callback runs only once the
+user is already back; VimLeavePre is the last moment the event loop exists.
+Both therefore block for as long as the backend takes (~200ms with `tongue`),
+once, on a keystroke you are already waiting on. Handling only FocusLost fixes
+the case you noticed and leaves the other two reading as an intermittent bug.
+
+Coming back is unchanged: FocusGained, and VimResume, re-read the machine and
+re-assert English before you type into it.
+
+Off by default because the cost is real: every focus change across the
+boundary costs a backend call, and a terminal that reports focus while an IME
+candidate window is open reports it more often than you expect. Turn it on if
+you live in a multiplexer.
 
 ==============================================================================
 5. COMMANDS                                                  *tongue-commands*
@@ -203,7 +240,8 @@ wants; see |tongue-statusline|.
 Returns a table describing the resolved backend and the current state. Used by
 |tongue-health| and by `:Tongue status`; also what to paste into a bug report.
 Fields: `enabled`, `attached`, `misconfigured`, `reason`, `backend` (a copy),
-`last_layout`, `inserting`, `busy`, `observe`, `applied`, `timeout`, `verify`.
+`last_layout`, `inserting`, `busy`, `observe`, `applied`, `timeout`, `verify`,
+`restore_on_unfocus`, `focused`.
 
 ==============================================================================
 7. STATUSLINE                                              *tongue-statusline*

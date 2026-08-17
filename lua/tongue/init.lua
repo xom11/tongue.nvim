@@ -60,6 +60,7 @@ local typing = require("tongue.mode").typing
 ---@field notify? boolean Warn on backend failure. Default true.
 ---@field timeout? integer Per-command deadline in milliseconds. Default 2000.
 ---@field verify? boolean Re-read the machine before every switch. Default false.
+---@field restore_on_unfocus? boolean Put the layout back when Neovim is not the focused editor. Default false.
 
 ---@class tongue.Status
 ---@field enabled boolean A backend was resolved.
@@ -74,6 +75,8 @@ local typing = require("tongue.mode").typing
 ---@field applied string? Token of our most recent believed `set`.
 ---@field timeout integer
 ---@field verify boolean
+---@field restore_on_unfocus boolean
+---@field focused boolean Neovim currently has the keyboard.
 
 -- ── configuration ───────────────────────────────────────────────────────────
 
@@ -83,6 +86,7 @@ local reason = "not set up"
 local timeout_ms = 2000
 local notify = true
 local verify = false
+local unfocus = false
 
 -- Rebuilt on every failure in the old version, which for a broken backend is
 -- every mode change. Neither can change after `setup`, so both are built once.
@@ -110,6 +114,12 @@ local get_str, set_str = "", ""
 --           reload can replace that configuration underneath it.
 local last_layout, inserting, busy, observe, applied
 local epoch, recheck, session = 0, false, 0
+
+-- focused : does Neovim have the keyboard. Only consulted when `unfocus` is on;
+--           see `want`. Starts true because an editor that just started is the
+--           thing you started it to type in, and because no event announces the
+--           focus you already have -- `FocusGained` fires on the transition.
+local focused = true
 local augroup = nil
 local attached = false
 local misconfigured = false
@@ -331,8 +341,17 @@ local cycle, finish
 --- Snapshotting the desired token into a variable and reading it back in a
 --- callback just moves the staleness one level down: by the time a 50 ms read
 --- returns, the mode may have changed twice.
+---
+--- Two boundaries, not one. Insert mode is the obvious one. The other is whether
+--- Neovim has the keyboard at all: an input method is machine-global, so forcing
+--- English while the editor sits in the background forces it on whatever the user
+--- actually switched to. `cfg.english` is the answer only for Normal mode *in a
+--- focused editor*; anywhere else the honest answer is "give it back".
 local function want()
-	return inserting and last_layout or cfg.english
+	if inserting or (unfocus and not focused) then
+		return last_layout
+	end
+	return cfg.english
 end
 
 -- ── telling the outside world ───────────────────────────────────────────────
@@ -552,6 +571,97 @@ local function on_mode(old_mode, new_mode)
 	cycle()
 end
 
+--- Handle one focus transition. The other half of `on_mode`, crossing the other
+--- boundary in `want`.
+---
+--- Split out from the autocmds for exactly the reason `on_mode` is, and the trap
+--- is sharper here: under `nvim -l` there is no main loop, so nothing can hold
+--- Insert mode and `vim.fn.mode(1)` answers `"n"` however the state machine has
+--- been driven. A test written against the autocmd takes the not-typing branch
+--- every single time -- which is how the first version of `tests/unfocus_spec.lua`
+--- went green against a deliberately broken guard.
+---@param gained boolean
+---@param is_typing boolean the editor's REAL mode, read at the callback
+local function on_focus(gained, is_typing)
+	if not gained then
+		if not focused then
+			return -- terminals repeat these; a repeat crosses nothing
+		end
+		focused = false
+		-- Same invalidation as a mode crossing, for the same reason: a reading
+		-- already in flight was taken on the other side of this boundary, so it
+		-- describes a state we have already left.
+		epoch = epoch + 1
+		if busy then
+			recheck = true
+		end
+		announce()
+		return cycle()
+	end
+
+	-- Recorded unconditionally, ahead of the guard below. Skipping the reconcile
+	-- mid-composition is right; skipping the FLAG is not. It would leave `focused`
+	-- false after the user is demonstrably back, so `want` keeps answering with the
+	-- layout and the next `<Esc>` lands in Normal mode in Vietnamese -- with no
+	-- further event able to correct it.
+	focused = true
+
+	-- Deliberately NOT deduplicated the way the losing side is. Reconciling on
+	-- every FocusGained is the documented behaviour, and it is the only thing that
+	-- ever notices an input method moved by a global hotkey while the editor sat in
+	-- the background -- including for the majority who leave `restore_on_unfocus`
+	-- off, where no FocusLost is even registered and `focused` is therefore always
+	-- already true.
+	--
+	-- Never while typing: the IME candidate window generates spurious FocusGained
+	-- through tmux focus-events, and re-selecting the source mid-composition is the
+	-- CJK flicker.
+	if is_typing then
+		return
+	end
+	inserting = false
+	resync()
+end
+
+--- Put the layout back RIGHT NOW, blocking until it lands.
+---
+--- The only synchronous call in this plugin, and it is here because two of the
+--- three ways out of the editor have no "later". `<C-z>` stops the process, so a
+--- callback scheduled from `VimSuspend` does not run until the user comes back --
+--- by which time the shell they wanted their layout for is gone. `VimLeavePre` is
+--- worse: it is the last moment the event loop is ours at all, and a scheduled
+--- callback there never runs. Both cost the ~200 ms the backend costs, once, on a
+--- keystroke the user is already waiting on.
+local function restore_now()
+	if not cfg or not attached or not unfocus then
+		return
+	end
+	local token = last_layout
+	-- Nothing to give back: no layout was ever learned, or the layout IS the
+	-- English token, or our own restore already landed.
+	if token == nil or token == cfg.english or applied == token then
+		return
+	end
+
+	local n = #cfg.set
+	local argv = {}
+	for i = 1, n do
+		argv[i] = cfg.set[i]
+	end
+	argv[n + 1] = token
+
+	-- `pcall` for the reason `run` has one: a failed spawn is raised on THIS
+	-- stack, and an uncaught error out of `VimLeavePre` greets the user with a
+	-- stack trace as their editor closes.
+	local ok, out = pcall(function()
+		return vim.system(argv, { text = true, timeout = timeout_ms }):wait(timeout_ms)
+	end)
+
+	-- Believed on exactly the terms `set_async` uses -- exit 0 AND silence. There
+	-- is no read left to settle a doubtful one with, so it is simply not recorded.
+	applied = (ok and out and out.code == 0 and (out.stdout or "") == "") and token or nil
+end
+
 local function attach()
 	augroup = api.nvim_create_augroup("tongue.nvim", { clear = true })
 	attached = true
@@ -578,17 +688,46 @@ local function attach()
 		end,
 	})
 
-	-- Regaining focus means something else may have moved the input method while
-	-- we were away. Never while typing: the IME candidate window generates
-	-- spurious FocusGained through tmux focus-events, and re-selecting the source
-	-- mid-composition is the flicker again.
-	api.nvim_create_autocmd("FocusGained", {
+	-- Regaining focus means something else may have moved the input method while we
+	-- were away. `VimResume` rides along because coming back from `<C-z>` is the
+	-- same event in every respect that matters here: time passed, and the machine
+	-- may have moved while we were not looking.
+	api.nvim_create_autocmd({ "FocusGained", "VimResume" }, {
 		group = augroup,
 		callback = function()
-			if not typing(vim.fn.mode(1)) then
-				inserting = false
-				resync()
+			on_focus(true, typing(vim.fn.mode(1)))
+		end,
+	})
+
+	if not unfocus then
+		return
+	end
+
+	api.nvim_create_autocmd("FocusLost", {
+		group = augroup,
+		callback = function()
+			on_focus(false, typing(vim.fn.mode(1)))
+		end,
+	})
+
+	-- The other two ways out, and neither is a focus event: the terminal that owns
+	-- the pane keeps the keyboard throughout `<C-z>` and `:q`, so nothing is
+	-- announced and `FocusLost` alone would fix one third of the problem while
+	-- leaving the rest to read as an intermittent bug.
+	--
+	-- A `set` already in flight can still land after this one on `VimLeavePre` and
+	-- put English back. It needs the user to quit inside a ~200 ms window that
+	-- opens only on a mode change, and there is no loop left to correct it in.
+	api.nvim_create_autocmd({ "VimSuspend", "VimLeavePre" }, {
+		group = augroup,
+		callback = function()
+			focused = false
+			epoch = epoch + 1
+			if busy then
+				recheck = true
 			end
+			restore_now()
+			announce()
 		end,
 	})
 end
@@ -637,6 +776,12 @@ function M.setup(opts)
 
 	notify = opts.notify ~= false
 	verify = opts.verify == true
+	unfocus = opts.restore_on_unfocus == true
+	-- Reset with the rest of the state machine. A `setup()` while the editor is in
+	-- the background is a config reload, not a focus change -- but leaving the flag
+	-- false there would have the startup reconcile below restore the layout instead
+	-- of forcing English, which is the opposite of what a cold start owes.
+	focused = true
 
 	--- Report a config bug and stay inert. Never silenced by `notify = false`:
 	--- that switch is for a flaky backend, not for a broken config.
@@ -800,6 +945,12 @@ function M._on_mode(old_mode, new_mode)
 	on_mode(old_mode, new_mode)
 end
 
+--- Internal, for tests only. See `on_focus`.
+---@private
+function M._on_focus(gained, is_typing)
+	on_focus(gained, is_typing)
+end
+
 --- Current state. For `:checkhealth tongue`, `:Tongue status`, and bug reports.
 ---
 --- `backend` is a COPY. The resolved backend is often one of the shared preset
@@ -825,6 +976,8 @@ function M.status()
 		applied = applied,
 		timeout = timeout_ms,
 		verify = verify,
+		restore_on_unfocus = unfocus,
+		focused = focused,
 	}
 end
 

@@ -82,6 +82,7 @@ function M.arm(o)
 		notify = o.notify or false,
 		timeout = o.timeout or 3000,
 		verify = o.verify or false,
+		restore_on_unfocus = o.unfocus or false,
 	})
 end
 

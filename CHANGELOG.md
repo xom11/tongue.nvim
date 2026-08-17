@@ -5,6 +5,51 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-08-17
+
+### Added
+
+- **`restore_on_unfocus`** — give the layout back when Neovim stops being the
+  editor you are typing into. Off by default; see `:help tongue-unfocus`.
+
+  An input method is machine-global, and until now the plugin only ever thought
+  about Neovim's own modes. Forcing English in Normal mode therefore leaked out
+  of the editor: switch to another pane, tab or application and you were typing
+  English there, with nothing left to turn the IME back on but your own hotkey.
+
+  Three ways out of the editor, and only one of them is a focus event.
+  `FocusLost` restores asynchronously like every other switch. `VimSuspend`
+  (`<C-z>`) and `VimLeavePre` (`:q`) fire **no focus event at all** — the
+  terminal owning the pane keeps the keyboard throughout — and neither has a
+  "later" to schedule into, so both restore **synchronously**, blocking for the
+  one backend call. Coming back through `FocusGained` or `VimResume` re-asserts
+  English exactly as before.
+
+  Verified end to end on macOS with the real `tongue` backend inside herdr:
+  focused Normal mode holds English, switching pane or tab restores Vietnamese,
+  switching back forces English, and `:q` restores Vietnamese with no focus event
+  involved.
+
+### Fixed
+
+- **`FocusGained` now records that focus returned even while you are typing.**
+  The reconcile is still skipped mid-composition — that is what keeps IME
+  candidate windows from flickering — but the flag behind it is not. Without the
+  split, focus regained during Insert left the plugin believing it was still in
+  the background, and the next `<Esc>` asked for the layout instead of English:
+  Normal mode stranded in Vietnamese with no remaining event able to correct it.
+  Only reachable with `restore_on_unfocus` on.
+
+### Changed
+
+- **Focus handling moved behind `on_focus`, mirroring `on_mode`**, and is
+  exercised through `_on_focus` in tests. This is not tidying: under `nvim -l`
+  there is no main loop, so nothing can hold Insert mode and `vim.fn.mode(1)`
+  answers `"n"` however the state machine was driven. A test written against the
+  autocmd takes the not-typing branch every single time — which is exactly how
+  the first version of `tests/unfocus_spec.lua` went green against a
+  deliberately broken guard.
+
 ## [1.1.1] — 2026-08-09
 
 The last backend that had never been run is now run. Nothing in the plugin's
@@ -260,6 +305,7 @@ change, so `version = "*"` in lazy.nvim would pin users and never move them.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
 
+[1.2.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.2.0
 [1.1.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.1
 [1.1.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.0
 [1.0.2]: https://github.com/xom11/tongue.nvim/releases/tag/v1.0.2
