@@ -5,6 +5,56 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-08-19
+
+One warning, for the one failure this plugin could not previously name. Nothing
+about how it drives an input method changed.
+
+### Added
+
+- **`:checkhealth tongue` warns when an SSH variable is set and the plugin is
+  running anyway.** That combination can only mean `backend` was named
+  explicitly, because an explicit backend is exactly what overrides the SSH
+  guard — and it is the one case where every other check passes while `get` and
+  `set` drive a machine nobody is typing on. Neovim on one machine, the keyboard
+  on another, and the input method that turns your keystrokes into Vietnamese
+  living on neither of the two the plugin can see.
+
+  The warning names the variable, names this machine, and leads with the check
+  that settles it: run the `get` argv by hand while you switch input method on
+  the machine you are *typing* on. If the token never moves, this is the wrong
+  machine.
+
+  A warning rather than an error, because the condition is a proxy and not
+  evidence. `$SSH_CONNECTION` can be a fossil — a multiplexer or daemon first
+  started over SSH exports it to every session it serves afterwards, local ones
+  included — and a backend can already be a script that routes to the client.
+  Both directions of wrongness are now written down under Known limitations.
+
+- **A backend that has to follow the environment has a documented answer**
+  (`:help tongue-backend-env`). `get` and `set` stay fixed argv — they sit on
+  the hot path, one of them runs inside `VimLeavePre`, and both run under a
+  deadline the plugin owns, so none of them is a place to call back into your
+  config. What moves instead: a backend is a program, so it can be a script that
+  decides per call in its own process; and when the *answer* changes while
+  Neovim runs, `setup()` can simply be called again, which is what `:Lazy
+  reload` has always done.
+
+### Tests
+
+- Three new tests, each verified to fail without the change: the warning fires
+  and names the variable that fired (all three of them), `backend.ssh_var` is
+  the single copy of that rule rather than a loop copied next to the warning,
+  and — the counterweight — a machine with no SSH variable gets no warning at
+  all. Without that last one a version that warns unconditionally passes every
+  other test in the file, since the runner clears all three variables before the
+  suite starts.
+- One test pins the documented recipe: a second `setup()` drives the new argv,
+  not the one it replaced. Red when `setup()` is mutated to keep the backend it
+  already had — a mutation the rest of the suite barely notices, because every
+  other second-`setup()` test uses the same fixture argv and differs only by
+  environment.
+
 ## [1.2.0] — 2026-08-17
 
 ### Added
@@ -305,6 +355,7 @@ change, so `version = "*"` in lazy.nvim would pin users and never move them.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
 
+[1.3.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.3.0
 [1.2.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.2.0
 [1.1.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.1
 [1.1.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.0

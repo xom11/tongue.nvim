@@ -483,6 +483,34 @@ return function(t)
 		h.settle()
 	end)
 
+	t.test("a second setup() drives the new argv, not the one it replaced", function()
+		-- The documented answer to a backend whose right answer changes while
+		-- Neovim runs (|tongue-backends|): work it out yourself and call `setup()`
+		-- again. That is only a recipe if the new argv is the one that runs, and
+		-- nothing else here asserts it -- every other second-`setup()` test uses
+		-- the same fixture argv and differs only by environment.
+		h.arm({ machine = "vi" })
+		h.settle()
+
+		local other = vim.fn.tempname()
+		vim.fn.writefile({}, other)
+		-- `env` rather than a second fixture: same script, different log, so the
+		-- only thing that can put a line in `other` is the new argv being spawned.
+		local routed = { "env", "FAKE_IM_LOG=" .. other, h.fake_im }
+		require("tongue").setup({
+			backend = vim.tbl_extend("force", h.backend, { get = routed, set = routed }),
+			notify = false,
+			timeout = 3000,
+		})
+		h.settle()
+		h.enter()
+		h.settle()
+
+		t.ok(#vim.fn.readfile(other) > 0, "the second setup()'s argv must be the one that runs")
+		h.leave()
+		h.settle()
+	end)
+
 	t.test("an invalid backend refuses to run rather than doing nothing quietly", function()
 		require("tongue").setup({ backend = { english = "en" }, notify = false })
 		local s = st()

@@ -366,6 +366,41 @@ Every OS chain, Linux and Windows included, is exercised from a Mac:
 `tests/backend_spec.lua` drives `resolve()` through an injected prober rather
 than asking the real machine.
 
+### When the backend depends on the environment
+
+`get` and `set` are argv, fixed at `setup()`. That is deliberate: they sit on the
+hot path, one of them runs inside `VimLeavePre` where the event loop is about to
+stop being ours, and both run under a deadline this plugin owns. None of those
+three is a place to call back into your config.
+
+Two things follow, and between them they cover a moving target.
+
+A backend is a **program**, so a backend can be a script. Whatever it has to work
+out — which machine, which of two tools, which display — it works out per call,
+in its own process, off the main loop. That is also how you drive an input method
+that is not on this machine: a wrapper that speaks one vocabulary and forwards to
+whichever side owns the keyboard.
+
+If the **answer** changes while Neovim is running, call `setup()` again. It
+replaces the backend, forgets the remembered layout — correct, a token from one
+machine means nothing on another — and reads the machine once. `:Lazy reload` has
+always done exactly this. Do it inside `vim.schedule()`, because `setup()` clears
+and rebuilds the plugin's own augroup:
+
+```lua
+vim.api.nvim_create_autocmd("FocusGained", {
+  group = vim.api.nvim_create_augroup("my-route", { clear = true }),
+  callback = function()
+    vim.schedule(function()
+      require("tongue").setup({ backend = my_backend_for_now() })
+    end)
+  end,
+})
+```
+
+Keep that function cheap, or make it asynchronous — `vim.system` with a callback
+that calls `setup()` when it answers. Nothing here needs it to be synchronous.
+
 ## Statusline
 
 `token()` is the plugin's *intent*, so it is right the instant the mode changes
@@ -437,6 +472,11 @@ which. It reports:
 - a token outside the backend's declared set — what a name collision looks like
 - a **config bug**, as an error rather than the same neutral note as "there is no
   IME tool on this machine"
+- an **SSH variable on a plugin that is running anyway** — which can only mean
+  `backend` was named explicitly, because that is what overrides the SSH guard.
+  It is the one combination where everything above passes and the plugin still
+  drives a machine nobody is typing on, so the warning names the variable and
+  this machine's hostname, and hands you the one-line check that settles it
 
 It also **tries the switch**, not just the read — and that is the only way to
 catch a `set` that lies, which is the failure people actually hit (`fcitx5` with
@@ -528,6 +568,18 @@ are regression tests here for both:
   answers `0` without one. That `0` is declared as the backend's no-idea
   sentinel, so it is no longer mistaken for a layout to restore, but nothing
   useful happens either.
+- **Nothing tells this plugin who is typing**, and those three variables are the
+  closest thing there is. They are *right* when the keyboard is at the other end:
+  `ssh box` → `nvim`, with or without a multiplexer, and `ssh -X` or waypipe too
+  — the program runs there while the display and the input method are here. That
+  is what `:checkhealth` warns about. They are *wrong* when a multiplexer or
+  daemon first started over SSH exports a fossil to every session it serves
+  afterwards, when the whole session really is at the far end (VNC, RDP), on
+  `ssh localhost`, or when the backend is already a script that routes to the
+  client. And they are *absent* on remoting that is not SSH: `docker exec`,
+  `kubectl exec`, a serial console, an editor's own remote protocol — and Neovim
+  reached over Windows OpenSSH, which sets none of the three. Hence a warning
+  with a check attached, rather than an error.
 - Switching takes as long as your backend takes (~200 ms for `tongue`, because
   it starts and stops an IME process). There is a window after leaving Insert
   where the switch has not landed yet. Nothing in an editor plugin can close it.

@@ -372,6 +372,40 @@ Every OS chain, Linux and Windows included, is exercised from a Mac:
 tests/backend_spec.lua drives resolve() through an injected prober rather than
 asking the real machine. That tests the CHAIN, not the binaries.
 
+WHEN THE BACKEND DEPENDS ON THE ENVIRONMENT              *tongue-backend-env*
+
+`get` and `set` are argv, fixed at `setup()`. That is deliberate: they sit on
+the hot path, one of them runs inside `VimLeavePre` where the event loop is
+about to stop being ours, and both run under a deadline this plugin owns. None
+of those three is a place to call back into your config.
+
+Two things follow, and between them they cover a moving target.
+
+A backend is a PROGRAM, so a backend can be a script. Whatever it has to work
+out -- which machine, which of two tools, which display -- it works out per
+call, in its own process, off the main loop. That is also how you drive an
+input method that is not on this machine: a wrapper that speaks one vocabulary
+and forwards to whichever side owns the keyboard.
+
+If the ANSWER changes while Neovim is running, call `setup()` again. It
+replaces the backend, forgets the remembered layout -- correct, a token from
+one machine means nothing on another -- and reads the machine once. `:Lazy
+reload` has always done exactly this. Do it inside `vim.schedule()`, because
+`setup()` clears and rebuilds the plugin's own augroup: >lua
+
+    vim.api.nvim_create_autocmd("FocusGained", {
+      group = vim.api.nvim_create_augroup("my-route", { clear = true }),
+      callback = function()
+        vim.schedule(function()
+          require("tongue").setup({ backend = my_backend_for_now() })
+        end)
+      end,
+    })
+<
+Keep that function cheap, or make it asynchronous -- `vim.system` with a
+callback that calls `setup()` when it answers. Nothing here needs it to be
+synchronous.
+
 ==============================================================================
 9. HEALTH                                                      *tongue-health*
 
@@ -408,6 +442,20 @@ plugin looks identical from the outside whether it is enforcing English or
 merely reselecting an input source that was never what made you type
 Vietnamese.
 
+                                                        *tongue-wrong-machine*
+And it WARNS when $SSH_TTY, $SSH_CONNECTION or $SSH_CLIENT is set while the
+plugin is running anyway -- which can only mean `backend` was named
+explicitly, since an explicit backend is what overrides the SSH guard. That is
+the one combination where every check above can pass and the plugin
+still drives a machine nobody is typing on: the commands run where Neovim
+runs, and nothing a process can read says which keyboard the bytes came
+from. The warning names
+the variable and this machine's hostname, and its first line is the check that
+settles it -- run the `get` argv by hand while you switch input method on the
+machine you are TYPING on. A warning rather than an error, because the
+condition is a proxy: see |tongue-limitations|. The way out is
+|tongue-backend-env|.
+
 ==============================================================================
 10. LIMITATIONS                                           *tongue-limitations*
 
@@ -426,6 +474,19 @@ Vietnamese.
   window and answers "0" without one. That "0" is declared as the backend's
   no-idea sentinel, so it is no longer mistaken for a layout to restore, but
   nothing useful happens.
+
+- Nothing tells this plugin who is typing, and those three variables are the
+  closest thing there is. They are RIGHT when the keyboard is at the other
+  end: `ssh box` then `nvim`, with or without a multiplexer, and `ssh -X` or
+  waypipe too -- the program runs there while the display and the input method
+  are here. That is what |tongue-wrong-machine| warns about. They are WRONG
+  when a multiplexer or daemon first started over SSH exports a fossil to
+  every session it serves afterwards, when the whole session really is at the
+  far end (VNC, RDP), on `ssh localhost`, or when the backend is already a
+  script that routes to the client. And they are ABSENT on remoting that is
+  not SSH: `docker exec`, `kubectl exec`, a serial console, an editor's own
+  remote protocol -- and Neovim reached over Windows OpenSSH, which sets none
+  of the three. Hence a warning with a check attached, rather than an error.
 
 - A switch takes as long as the backend takes (~200ms for `tongue`, which
   starts and stops an IME process). The window after leaving Insert where the
