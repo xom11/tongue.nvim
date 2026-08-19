@@ -589,6 +589,14 @@ are regression tests here for both:
 - An input method changed by hand **in Normal mode** survives into Insert rather
   than being overwritten, because entering Insert no longer re-reads the machine.
   `verify = true` if you want the old behaviour.
+- What comes back is what you were *using*, and a reading is the only way the
+  plugin knows. A reading taken while English is already in force — at startup,
+  or on any crossing you reach before switching back — makes English the thing
+  it remembers, so leaving the editor puts English back. That looks exactly like
+  `restore_on_unfocus` never firing; `require("tongue").layout()` tells them
+  apart, since it returns the token that would be given back. One switch to your
+  own input method, made in Insert, corrects it for the rest of the session.
+
 - The layout is remembered **per Neovim**, not per buffer: one token, whichever
   buffer you were in when you chose it.
 

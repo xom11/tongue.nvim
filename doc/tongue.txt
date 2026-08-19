@@ -500,6 +500,14 @@ condition is a proxy: see |tongue-limitations|. The way out is
   than being overwritten, because entering Insert no longer re-reads the
   machine. Set `verify = true` for the old behaviour. See |tongue-fast-path|.
 
+- What comes back is what you were USING, and a reading is the only way this
+  plugin knows. A reading taken while English is already in force -- at
+  startup, or on any crossing you reach before switching back -- makes English
+  the thing it remembers, so leaving the editor puts English back. That looks
+  exactly like `restore_on_unfocus` never firing. |tongue.layout()| tells them
+  apart: it returns the token that would be given back. One switch to your own
+  input method, made in Insert, corrects it for the rest of the session.
+
 - The layout is remembered per Neovim, not per buffer: one token, whichever
   buffer you were in when you chose it.
 

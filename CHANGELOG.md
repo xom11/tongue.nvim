@@ -5,6 +5,30 @@ Notable changes only. Dates are the day the change landed on `main`.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.1] — 2026-08-20
+
+One limitation written down. Nothing in the plugin's behaviour changed.
+
+### Documented
+
+- **What comes back is what you were using, and English counts as something you
+  were using.** Every restore is fed from a reading, so a reading taken while
+  English is already in force is what gets remembered — and then leaving the
+  editor puts English back, which is indistinguishable from `restore_on_unfocus`
+  never firing.
+
+  Reached on a real machine on 2026-08-19, and the symptom sent the search in
+  the wrong direction twice: the focus plumbing was measured and found healthy,
+  a second editor was suspected and cleared, and only a log of the backend's own
+  calls showed the instance reading `en` on a crossing and never issuing a
+  restore afterwards. `require("tongue").layout()` shows the token it is holding
+  and would have answered in one step.
+
+  Not fixed, because there is nothing to fix at the plugin's level: a backend
+  reports the machine's real state, and English is a real state. It heals the
+  moment the plugin sees your own input method again — one switch, made in
+  Insert.
+
 ## [1.3.0] — 2026-08-19
 
 One warning, for the one failure this plugin could not previously name. Nothing
@@ -355,6 +379,7 @@ change, so `version = "*"` in lazy.nvim would pin users and never move them.
 - Process-count budgets, so the fast path cannot silently regress into costing
   twice as much while still behaving correctly.
 
+[1.3.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.3.1
 [1.3.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.3.0
 [1.2.0]: https://github.com/xom11/tongue.nvim/releases/tag/v1.2.0
 [1.1.1]: https://github.com/xom11/tongue.nvim/releases/tag/v1.1.1
