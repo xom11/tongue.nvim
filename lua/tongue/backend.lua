@@ -129,8 +129,13 @@ end
 ---
 --- An exported-but-empty variable reads as `""`, which is truthy in Lua and is
 --- how the old check could also fire on a purely local session.
+---
+--- Exported because `health` asks the same question at a different time, and one
+--- copy of the empty-string rule is the point: a second loop written next to a
+--- warning would drift, and the drifted copy would fire on a machine that never
+--- saw SSH at all.
 ---@return string? name the variable that fired
-local function ssh_var()
+function M.ssh_var()
 	for _, name in ipairs({ "SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT" }) do
 		local v = vim.env[name]
 		if type(v) == "string" and v ~= "" then
@@ -165,7 +170,7 @@ local function pick(opts, probe)
 	-- is the one on the machine in front of you, and that is the client's, not
 	-- this one's -- switching here would change nothing you can see while
 	-- spawning a process on every mode change.
-	local ssh = ssh_var()
+	local ssh = M.ssh_var()
 	if ssh then
 		-- Naming the variable makes `:checkhealth` actionable: a stale `SSH_TTY`
 		-- inherited from a tmux server that was first started over SSH is the one

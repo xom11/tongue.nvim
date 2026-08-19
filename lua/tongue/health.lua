@@ -105,6 +105,42 @@ function H.check()
 		h_warn(cfg.note)
 	end
 
+	-- An SSH variable, on a plugin that is nonetheless running. That combination
+	-- is the one place where every check below can pass and the plugin still
+	-- drives a machine nobody is typing on: `get` and `set` run where Neovim
+	-- runs, and nothing a process can read says where the keystrokes came from.
+	--
+	-- Auto-detection cannot produce it. `pick` returns nil for every
+	-- non-explicit path once a variable is set -- pinned by "SSH stops
+	-- auto-detection but never an explicit choice" in tests/backend_spec.lua --
+	-- so reaching here means `backend` was named explicitly, which overrides the
+	-- guard on purpose. Nowhere else in the plugin says so again.
+	--
+	-- A warning, not an error: the condition is a proxy rather than evidence.
+	-- The variable can be a fossil, and the backend can be one that routes to
+	-- the client. Hence the first advice line, which settles it either way.
+	--
+	-- Required at the call site: `require("tongue")` above already loaded it, and
+	-- one copy of the empty-string rule is the point -- see `M.ssh_var`.
+	local ssh = require("tongue.backend").ssh_var()
+	if ssh then
+		h_warn(
+			("$%s is set: these commands run on %s, which may not be the machine your keystrokes come from"):format(
+				ssh,
+				vim.fn.hostname()
+			),
+			{
+				("run `%s` by hand while you switch input method on the machine you are TYPING on -- if the token never moves, this is the wrong machine"):format(
+					table.concat(cfg.get, " ")
+				),
+				("$%s can be a fossil: a multiplexer or daemon first started over SSH exports it to every session it serves afterwards, local ones included"):format(
+					ssh
+				),
+				"if the keyboard really is elsewhere, see :help tongue-backend-env -- a backend can be a script that routes to the client, and setup() can be called again when that answer changes",
+			}
+		)
+	end
+
 	local exe = cfg.get[1]
 	local path = vim.fn.exepath(exe)
 	if path == "" then

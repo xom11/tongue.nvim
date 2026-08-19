@@ -139,6 +139,43 @@ return function(t)
 		t.eq(find(seen, "warn", "lever"), nil, "no note, no warning")
 	end)
 
+	t.test("an SSH variable is warned about, and the warning names it", function()
+		-- The failure nothing else here can see: Neovim on one machine, the
+		-- keyboard on another. The plugin is running at all only because
+		-- `backend` was named explicitly -- which overrides the SSH guard on
+		-- purpose -- so every other check in this file passes while `get` and
+		-- `set` drive a machine nobody is typing on.
+		--
+		-- All three variables, for the reason `backend.lua` reads all three:
+		-- which one survives to Neovim is not something the plugin chooses.
+		h.arm({ machine = "en" })
+		h.settle()
+		for _, name in ipairs({ "SSH_TTY", "SSH_CONNECTION", "SSH_CLIENT" }) do
+			vim.env[name] = "10.0.0.2 51000 10.0.0.1 22"
+			local ok, err, seen = check()
+			-- Cleared BEFORE the assertions. `t.ok` throws and `t.test` pcalls it,
+			-- so a line after a failed assert never runs -- and a leaked variable
+			-- turns every later spec into a different test than the one written.
+			vim.env[name] = nil
+			t.ok(ok, "must not throw: " .. tostring(err))
+			local e = find(seen, "warn", "keystrokes come from")
+			t.ok(e ~= nil, "driving the wrong machine must be called out: " .. vim.inspect(seen))
+			t.ok(e.msg:find(name, 1, true) ~= nil, "and the warning must name the variable that fired: " .. e.msg)
+		end
+	end)
+
+	t.test("no SSH variable, no warning about the machine", function()
+		-- The counterweight, and it is not ceremony: the condition above is a
+		-- proxy, so a version that fires unconditionally passes every other test
+		-- in this file. `tests/run.lua` clears all three variables before the
+		-- suite starts, which is exactly what makes such a version invisible.
+		h.arm({ machine = "en" })
+		h.settle()
+		local ok, err, seen = check()
+		t.ok(ok, "must not throw: " .. tostring(err))
+		t.eq(find(seen, "warn", "keystrokes come from"), nil, "no SSH variable, nothing to say")
+	end)
+
 	t.test("health exercises `set`, and puts the machine back", function()
 		-- The only way to catch a backend whose `set` lies: measured on fcitx5
 		-- 5.1.19, `-s <a name not in your group>` exits 0, prints nothing and

@@ -263,6 +263,31 @@ return function(t)
 		end
 	end)
 
+	t.test("`ssh_var` is exported, names the variable, and ignores an empty one", function()
+		-- `health` asks the same question at a different moment, and this test is
+		-- what keeps that ONE copy of the rule. A second loop written next to the
+		-- warning would drift, and the drifted copy fires on a machine that has
+		-- never seen SSH.
+		--
+		-- The empty case is written down but proves nothing on its own, and that
+		-- is worth saying rather than trusting: Neovim's `os_getenv` maps an
+		-- exported-but-empty variable to NULL, so `vim.env[name]` answers nil
+		-- here and never `""` (measured on 0.12.4 -- deleting the `v ~= ""` guard
+		-- in `ssh_var` leaves this whole suite green). It stays because the guard
+		-- costs nothing and the day that changes, this is what notices.
+		t.eq(backend.ssh_var(), nil, "precondition: tests/run.lua clears all three")
+		for _, name in ipairs(SSH_VARS) do
+			local saved = vim.env[name]
+			vim.env[name] = ""
+			local empty = backend.ssh_var()
+			vim.env[name] = "10.0.0.2 51000 10.0.0.1 22"
+			local live = backend.ssh_var()
+			vim.env[name] = saved
+			t.eq(empty, nil, ("an exported-but-empty %s is not an SSH session"):format(name))
+			t.eq(live, name, "and a real one must come back by name")
+		end
+	end)
+
 	-- ── the contract ──────────────────────────────────────────────────────────
 
 	t.test("a hand-written backend still resolves as `explicit`", function()
