@@ -623,6 +623,21 @@ local function on_focus(gained, is_typing)
 	resync()
 end
 
+--- Ceiling for the one blocking call below, and deliberately NOT `timeout_ms`.
+---
+--- `timeout_ms` is sized for the async path, where nobody is waiting; here the
+--- editor is frozen solid (`SystemObj:wait` polls with `fast_only`, so not a
+--- keystroke is read). A restore that has not landed in 500 ms will not land
+--- before the process disappears either, so a bigger budget buys freeze, not
+--- success. Measured 20/08/2026, macmini, a two-hop `ime-route set vi`: 261 ms
+--- healthy -- while a peer that is reachable but mute burns the WHOLE budget,
+--- because an ssh slave on a warm ControlMaster opens no TCP and therefore
+--- never consults `ConnectTimeout`. Nothing under it bounds the bad case.
+---
+--- `math.min`, not a flat 500: `setup({ timeout = 200 })` is a user saying the
+--- backend is fast and they want out sooner, and that must still win.
+local RESTORE_DEADLINE = 500
+
 --- Put the layout back RIGHT NOW, blocking until it lands.
 ---
 --- The only synchronous call in this plugin, and it is here because two of the
@@ -631,7 +646,7 @@ end
 --- by which time the shell they wanted their layout for is gone. `VimLeavePre` is
 --- worse: it is the last moment the event loop is ours at all, and a scheduled
 --- callback there never runs. Both cost the ~200 ms the backend costs, once, on a
---- keystroke the user is already waiting on.
+--- keystroke the user is already waiting on -- and at most `RESTORE_DEADLINE`.
 local function restore_now()
 	if not cfg or not attached or not unfocus then
 		return
@@ -653,8 +668,9 @@ local function restore_now()
 	-- `pcall` for the reason `run` has one: a failed spawn is raised on THIS
 	-- stack, and an uncaught error out of `VimLeavePre` greets the user with a
 	-- stack trace as their editor closes.
+	local deadline = math.min(timeout_ms, RESTORE_DEADLINE)
 	local ok, out = pcall(function()
-		return vim.system(argv, { text = true, timeout = timeout_ms }):wait(timeout_ms)
+		return vim.system(argv, { text = true, timeout = deadline }):wait(deadline)
 	end)
 
 	-- Believed on exactly the terms `set_async` uses -- exit 0 AND silence. There

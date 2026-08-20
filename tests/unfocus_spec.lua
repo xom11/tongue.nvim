@@ -148,6 +148,41 @@ return function(t)
 		t.eq(h.machine(), "vi", "the restore must have landed before the event returned")
 	end)
 
+	t.test("a slow backend on the way out freezes for the restore cap, not the timeout", function()
+		-- The other half of the test above. That one says the restore must block;
+		-- this one says how long it is allowed to block for, because "blocking" and
+		-- "blocking for the general `timeout`" are the same code and very different
+		-- editors. `RESTORE_DEADLINE` caps it at 500 ms however big `timeout` is.
+		--
+		-- Asserted on the wall clock of the handler, because that IS the observable:
+		-- a restore that misses the cap records nothing and returns nothing, so
+		-- there is no state to read the deadline off. The `set` count is checked
+		-- first for the opposite reason -- a guard that returned early would also
+		-- take zero milliseconds and pass every timing assertion in this file.
+		--
+		-- The delay is armed after `settle` so only the restore pays it, and it is
+		-- far past BOTH budgets on purpose: choose one between them and the capped
+		-- and uncapped versions land ~200 ms apart, which is noise on a loaded
+		-- machine. `SystemObj:wait` spends its budget, SIGKILLs, then spends it
+		-- again, and `fake-im`'s forked `sleep` holds the stdout pipe open through
+		-- both -- so the shapes here are 500+500 against 2000+wherever the child
+		-- finally exits. Measured on this machine: 1005 ms capped, 3026 ms without.
+		local uv = vim.uv or vim.loop
+		h.arm({ machine = "vi", unfocus = true, timeout = 2000 })
+		h.settle()
+		t.eq(st().last_layout, "vi", "precondition: there is a layout to put back")
+		local before = h.count("set")
+
+		vim.env.FAKE_IM_DELAY_MS = "3000"
+		local t0 = uv.hrtime()
+		fire("VimLeavePre")
+		local ms = (uv.hrtime() - t0) / 1e6
+		vim.env.FAKE_IM_DELAY_MS = "0"
+
+		t.eq(h.count("set"), before + 1, "precondition: the restore really did spawn and block")
+		t.ok(ms < 2000, ("quitting must not freeze for the general timeout; froze %.0f ms"):format(ms))
+	end)
+
 	t.test("quitting with the flag off leaves the machine alone", function()
 		h.arm({ machine = "vi" })
 		h.settle()

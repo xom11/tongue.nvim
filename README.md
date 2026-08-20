@@ -149,8 +149,12 @@ stopped being focused, so nothing announces them — and neither has a "later" t
 schedule into. `<C-z>` stops the process, so a callback runs only once the user
 is already back; `VimLeavePre` is the last moment the event loop exists. Both
 therefore block for as long as the backend takes (~200 ms with `tongue`), once,
-on a keystroke you are already waiting on. Handling only `FocusLost` fixes the
-case you noticed and leaves the neighbouring two to read as an intermittent bug.
+on a keystroke you are already waiting on — but never longer than 500 ms, no
+matter what `timeout` says. A restore that has not landed by then will not land
+before the process is gone either, so past that point a bigger deadline only
+buys editor freeze; a `timeout` set *below* 500 ms still wins. Handling only
+`FocusLost` fixes the case you noticed and leaves the neighbouring two to read
+as an intermittent bug.
 
 Coming back is unchanged: `FocusGained` (and `VimResume`) re-read the machine and
 re-assert English, so Normal mode is English again before you type into it.

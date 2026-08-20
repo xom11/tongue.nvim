@@ -177,8 +177,12 @@ stopped being focused, so nothing announces them -- and neither has a "later"
 to schedule into. <C-z> stops the process, so a callback runs only once the
 user is already back; VimLeavePre is the last moment the event loop exists.
 Both therefore block for as long as the backend takes (~200ms with `tongue`),
-once, on a keystroke you are already waiting on. Handling only FocusLost fixes
-the case you noticed and leaves the other two reading as an intermittent bug.
+once, on a keystroke you are already waiting on -- but never longer than
+500ms, whatever `timeout` says. A restore that has not landed by then will not
+land before the process is gone either, so past that point a bigger deadline
+only buys editor freeze; a `timeout` set below 500ms still wins. Handling only
+FocusLost fixes the case you noticed and leaves the other two reading as an
+intermittent bug.
 
 Coming back is unchanged: FocusGained, and VimResume, re-read the machine and
 re-assert English before you type into it.
