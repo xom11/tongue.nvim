@@ -71,7 +71,7 @@ end
 -- Order matters: the cheap pure specs first, so a broken predicate is the first
 -- thing you read rather than the last. `wiring` is last because it starts a
 -- second Neovim and costs seconds where the others cost milliseconds.
-local ALL = { "mode", "sanitize", "backend", "fixture", "state", "unfocus", "api", "health", "wiring" }
+local ALL = { "mode", "sanitize", "backend", "fixture", "state", "exchange", "unfocus", "api", "health", "wiring" }
 
 --- Which specs to run: every argument after `-l tests/run.lua`, or all of them.
 ---

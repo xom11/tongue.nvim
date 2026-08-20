@@ -43,6 +43,13 @@ function M.validate(b)
 	if not is_string_list(b.set) then
 		return nil, "backend.set must be a non-empty list of strings"
 	end
+	-- Optional, and only ever an optimisation: read and write in one round trip,
+	-- printing the PREVIOUS token. Worth having only where a round trip is
+	-- expensive -- driving a Windows keyboard over ssh costs 656 ms a leg, and
+	-- leaving Insert needs two. A backend without it loses nothing but speed.
+	if b.exchange ~= nil and not is_string_list(b.exchange) then
+		return nil, "backend.exchange must be a non-empty list of strings, or nil"
+	end
 	if b.unknown ~= nil and type(b.unknown) ~= "string" then
 		return nil, "backend.unknown must be a string or nil"
 	end

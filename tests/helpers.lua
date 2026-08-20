@@ -76,6 +76,12 @@ function M.arm(o)
 		unknown = "unknown",
 		tokens = { "en", "vi", "zh" },
 	}
+	-- Opt-in, not default: every existing spec asserts on the `get`/`set` call
+	-- SEQUENCE, and a backend that collapses the pair would rewrite all of them
+	-- into passing for a different reason than they were written for.
+	if o.exchange then
+		M.backend.exchange = { M.fake_im, "exchange" }
+	end
 
 	require("tongue").setup({
 		backend = M.backend,

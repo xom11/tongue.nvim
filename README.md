@@ -273,6 +273,9 @@ require("tongue").setup({
     english = "1033",              -- token to force in Normal mode  (required)
     get     = { "im-select.exe" }, -- argv; prints the current token (required)
     set     = { "im-select.exe" }, -- argv; the token is appended    (required)
+    exchange = nil,                -- argv; sets the appended token AND prints
+                                   --   the previous one. Optional: saves a
+                                   --   round trip where one is expensive.
     unknown = nil,                 -- token meaning "I do not recognise this"
     tokens  = nil,                 -- allow-list; nil means anything one-word
     note    = nil,                 -- printed by :checkhealth; no other effect
@@ -285,6 +288,23 @@ interior whitespace is rejected rather than cleaned up, deliberately: readers
 that merge stderr into stdout turn a stray warning into a single
 plausible-looking token, which then gets stored and replayed as an argument
 forever.
+
+`exchange` is optional and is only ever a speed optimisation. It does what `get`
+then `set` do, in one process: it selects the appended token and prints the token
+that was there **before**. Unlike `set`, printing is its contract, so output is
+never read as failure.
+
+It is used on exactly one boundary — leaving Insert, where the plugin forces
+English — and never when restoring a remembered layout. An exchange has already
+written by the time its answer arrives, so it is only safe where writing blind is
+safe: forcing English always is, restoring is not. `verify = true` disables it,
+since that option asks for a read before every switch.
+
+Worth wiring up only where a round trip is expensive. Locally it saves ~40 ms and
+is not worth the extra command; over ssh it is the difference between one leg and
+two. Measured driving a Windows keyboard from a Mac on 2026-08-20: one leg cost
+656 ms — 293 ms of it Windows starting a fresh PowerShell before doing any work —
+so leaving Insert cost 1318 ms against a window of 150–400 ms.
 
 `set` must be **silent** on success. Anything it writes to stdout is treated as a
 failure, whatever the exit code says — `tongue en` and `fcitx5-remote -s` both

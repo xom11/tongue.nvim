@@ -50,6 +50,7 @@ local typing = require("tongue.mode").typing
 ---@field english string Token forced in Normal mode.
 ---@field get string[] argv printing the current token on stdout.
 ---@field set string[] argv selecting a token; the token is appended.
+---@field exchange? string[] argv that sets the appended token AND prints the previous one. Optional; saves a round trip where one is expensive.
 ---@field unknown? string Token meaning "unrecognised"; treated as `english`.
 ---@field tokens? string[] Allow-list; must contain `english`. nil means any single word.
 ---@field note? string Printed by `:checkhealth tongue`; no other effect.
@@ -90,7 +91,7 @@ local unfocus = false
 
 -- Rebuilt on every failure in the old version, which for a broken backend is
 -- every mode change. Neither can change after `setup`, so both are built once.
-local get_str, set_str = "", ""
+local get_str, set_str, exchange_str = "", "", ""
 
 -- ── state ───────────────────────────────────────────────────────────────────
 --
@@ -332,7 +333,77 @@ local function set_async(b, token, cb)
 	end)
 end
 
+--- Read and write in ONE round trip: set `token`, report what was there before.
+---
+--- Only ever an optimisation, and only on the way OUT of Insert. Two calls cost
+--- two round trips, which is invisible locally and dominant remotely -- driving
+--- a Windows keyboard from a Mac, one leg measured 656 ms on 20/08/2026 (293 ms
+--- of it Windows starting a fresh PowerShell), so a single `<Esc>` cost 1318 ms
+--- against a 150-400 ms window.
+---
+--- Unlike `set`, output here is the CONTRACT rather than a symptom: the previous
+--- token is what the caller came for. So "exited 0 but printed something" cannot
+--- mean failure, and the believability rule shifts accordingly -- a bad exit is
+--- re-checked against the machine exactly as `set_async` does, and a reading we
+--- cannot parse costs the learning, not the write.
+---@param cb fun(current: string?, unsure: boolean?, believed: boolean)
+local function exchange_async(b, token, cb)
+	local src = b.exchange
+	local n = #src
+	local argv = {}
+	for i = 1, n do
+		argv[i] = src[i]
+	end
+	argv[n + 1] = token
+
+	run(argv, function(out)
+		if out.code ~= 0 then
+			-- Same reasoning as `set_async`: an exit code is a claim, and the
+			-- machine can be asked. Costs a read only on the failure path.
+			warn("exchange-failed", "`%s %s` %s%s", exchange_str, token, why_code(out.code), tail(out.stderr))
+			return get_async(b, function(current, unsure)
+				cb(current, unsure, current == token and not unsure)
+			end)
+		end
+		local prev, err, unknown = sanitize(b, out.stdout)
+		if not prev then
+			-- The write still happened -- this backend does them in one step --
+			-- so `believed` stays true. What is lost is the observation, and
+			-- that is the same loss a garbled `get` already causes.
+			warn("exchange-garbage", "unusable output from `%s %s` (%s)%s", exchange_str, token, err, tail(out.stderr))
+			return cb(nil, nil, true)
+		end
+		cb(prev, unknown, true)
+	end)
+end
+
 -- ── the state machine ───────────────────────────────────────────────────────
+
+--- Consume a reading on behalf of `observe`.
+---
+--- Shared by both ways out of Insert -- `get` then `set`, and the single-trip
+--- `exchange` -- and that sharing is the point: `exchange` is only allowed to
+--- change how many round trips a boundary costs, never what is learned from it.
+--- Two copies of this would be two chances to drift.
+local function observe_reading(current, unsure)
+	if not (observe and current ~= nil and not unsure) then
+		-- Cleared only on a reading we can trust. A failed read is not evidence
+		-- -- burning the flag on it means the layout is never learned at all.
+		return
+	end
+	observe = false
+	if current ~= cfg.english then
+		-- Unambiguous: we never set anything but English on the way out, so a
+		-- non-English reading is the user's own doing.
+		last_layout = current
+	elseif applied == last_layout then
+		-- English, and our own restore of `last_layout` had already landed -- so
+		-- this English is a choice the user made, not our echo. Without this
+		-- guard the plugin cannot tell the two apart and quietly forgets the
+		-- layout you were typing in.
+		last_layout = cfg.english
+	end
+end
 
 local cycle, finish
 
@@ -446,6 +517,48 @@ cycle = function()
 		end)
 	end
 
+	-- ── one trip instead of two ─────────────────────────────────────────────
+	--
+	-- Same two operations, same evidence, one round trip. Only taken where it is
+	-- provably safe, which is a narrower set than it looks:
+	--
+	--   `observe`      -- the fast path is unavailable anyway, so the choice is
+	--                     between one trip and two, never between one and none.
+	--   `w == english` -- an exchange has WRITTEN by the time its answer arrives,
+	--                     so it can only be used where writing blind is safe.
+	--                     Forcing English is; restoring a remembered layout is
+	--                     not, and `get`-then-`set` keeps that direction honest
+	--                     (see the `current == nil` branch below).
+	--   `not verify`   -- `verify` means "read the machine before every switch",
+	--                     which is a request for the two-step shape.
+	--
+	-- Those conditions are exactly the `<Esc>` out of Insert -- the one boundary
+	-- a human can feel, and the one that costs 2x656 ms over a remote backend.
+	if b.exchange and observe and not verify and w == b.english then
+		busy = true
+		recheck = false
+		local my_epoch = epoch
+		return exchange_async(b, w, function(current, unsure, believed)
+			if session ~= my_session then
+				return
+			end
+			-- Learned BEFORE the epoch check, unlike the two-step path. There the
+			-- reading is discarded on a stale epoch because acting on it would
+			-- overwrite the state `observe` still waits to read -- but here the
+			-- write already happened, so dropping the reading would burn the trip
+			-- and learn nothing. The reading is still evidence about the moment
+			-- it was taken.
+			observe_reading(current, unsure)
+			if epoch ~= my_epoch then
+				-- The mode moved under us. `w` may now be wrong, and one more lap
+				-- costs a trip -- the same trade the two-step path makes.
+				recheck = true
+			end
+			applied = believed and w or nil
+			finish(w)
+		end)
+	end
+
 	busy = true
 	recheck = false
 	local my = epoch
@@ -479,23 +592,7 @@ cycle = function()
 		-- comparison below concluded "already English" and issued no `set` -- so
 		-- Normal mode quietly stopped being forced, which is the one thing this
 		-- plugin promises.
-		if observe and current ~= nil and not unsure then
-			-- Cleared only on a reading we can trust. A failed read is not
-			-- evidence -- burning the flag on it means the layout is never
-			-- learned at all.
-			observe = false
-			if current ~= cfg.english then
-				-- Unambiguous: we never set anything but English on the way out,
-				-- so a non-English reading is the user's own doing.
-				last_layout = current
-			elseif applied == last_layout then
-				-- English, and our own restore of `last_layout` had already
-				-- landed -- so this English is a choice the user made, not our
-				-- echo. Without this guard the plugin cannot tell the two apart
-				-- and quietly forgets the layout you were typing in.
-				last_layout = cfg.english
-			end
-		end
+		observe_reading(current, unsure)
 
 		local now_want = want()
 
@@ -843,6 +940,7 @@ function M.setup(opts)
 
 	get_str = table.concat(cfg.get, " ")
 	set_str = table.concat(cfg.set, " ")
+	exchange_str = cfg.exchange and table.concat(cfg.exchange, " ") or ""
 
 	last_layout = cfg.english
 

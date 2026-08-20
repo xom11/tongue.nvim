@@ -2,8 +2,9 @@
 #
 # Backend gia dung cho test. Tuan thu dung hop dong ma plugin doi hoi:
 #
-#     fake-im            -> in token hien tai ra stdout
-#     fake-im <token>    -> dat token
+#     fake-im                   -> in token hien tai ra stdout
+#     fake-im <token>           -> dat token
+#     fake-im exchange <token>  -> dat token moi VA in token CU ra stdout
 #
 # Khac backend that o cho no quan sat duoc: moi lan goi deu duoc ghi vao
 # $FAKE_IM_LOG, mot dong moi lan, nen test khang dinh duoc CA thu tu lenh chu
@@ -55,6 +56,8 @@ delay_ms="${FAKE_IM_DELAY_MS:-0}"
 if [ -n "$log" ]; then
 	if [ "$#" -eq 0 ]; then
 		echo "get" >>"$log"
+	elif [ "$1" = "exchange" ]; then
+		echo "exchange ${2:-}" >>"$log"
 	else
 		echo "set $1" >>"$log"
 	fi
@@ -71,6 +74,30 @@ nap() {
 		sleep "$(awk -v ms="$delay_ms" 'BEGIN { printf "%.3f", ms / 1000 }')"
 	fi
 }
+
+if [ "$#" -ge 1 ] && [ "$1" = "exchange" ]; then
+	# Doc VA dat trong dung mot luot: in token CU ra stdout, state thanh token moi.
+	# Van chup TRUOC khi ngu, y het duong `get` -- neu chup sau thi fixture khong
+	# the lo ra loi doc-cu, dung cai bay ghi chu (1) dau file noi toi.
+	if [ -r "$state" ]; then
+		snap="$(cat "$state")"
+	else
+		snap=""
+	fi
+	if [ -n "${FAKE_IM_SNAP_MARKER:-}" ]; then
+		printf 'x' >>"$FAKE_IM_SNAP_MARKER"
+	fi
+	nap
+	if [ -n "${FAKE_IM_SET_IGNORE:-}" ]; then
+		# Dat khong an, nhung VAN tra ve so doc -- hinh dang xau nhat cua
+		# exchange: nua doc that, nua dat hong, khong mot tin hieu nao.
+		printf '%s\n' "$snap"
+		exit 0
+	fi
+	printf '%s' "$2" >"$state"
+	printf '%s\n' "$snap"
+	exit 0
+fi
 
 if [ "$#" -eq 0 ]; then
 	# Chup TRUOC khi ngu -- xem ghi chu (1) dau file.

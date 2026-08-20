@@ -297,6 +297,7 @@ A backend is a table: >lua
       english = "1033",              -- token forced in Normal mode (required)
       get     = { "im-select.exe" }, -- argv, prints current token  (required)
       set     = { "im-select.exe" }, -- argv, token appended        (required)
+      exchange = nil,                 -- argv, sets token AND prints previous
       unknown = nil,                  -- token meaning "unrecognised"
       tokens  = nil,                  -- allow-list, nil = any single word
       note    = nil,                  -- shown by |tongue-health|, no effect
@@ -318,6 +319,22 @@ believed: "said it failed" and "failed" are not the same thing. IBus
 1.5.34-rc2 exits 1 while the engine changes, because `ibus engine` also shells
 out to setxkbmap. One read settles it, and costs nothing on a backend that
 does not lie: the confirmation happens only when a `set` reports failure.
+
+`exchange` is OPTIONAL and only ever a speed optimisation. It does what `get`
+then `set` do, in one process: selects the appended token, prints the token
+that was there before. Printing is its contract, so unlike `set` its output is
+never read as failure.
+
+Used on exactly one boundary -- leaving Insert, where English is forced -- and
+never when restoring a remembered layout. An exchange has already WRITTEN by
+the time its answer arrives, so it is only safe where writing blind is safe.
+Forcing English always is; restoring is not. `verify = true` disables it.
+
+Worth wiring up only where a round trip is expensive. Locally it saves ~40 ms
+and is not worth the extra command; over ssh it halves the cost of every
+<Esc>. Measured driving a Windows keyboard from a Mac on 2026-08-20: one leg
+656 ms, of which 293 ms was Windows starting a fresh PowerShell before doing
+any work -- so leaving Insert cost 1318 ms against a 150-400 ms window.
 
 `unknown` is what the backend prints when it does not recognise the live
 state. It is NOT treated as English: a shrug is not evidence, so the plugin
